@@ -37,6 +37,11 @@
     sourceUrl: ['input.js_url[name="source_url"]', 'input[name="source_url"]'],
     nativeRepostTitle: ['.js_reprint_recommend_title'],
     nativeRepostContent: ['.js_reprint_recommend_content[contenteditable="true"]'],
+    nativeRepostSource: ['#js_reprint_source'],
+    nativeRepostTip: ['#js_reprint_article_tips'],
+    nativeRepostDialog: ['.dialog_wrp.share_article_dialog'],
+    nativeRepostSearch: ['.share_article_dialog .js_search_input'],
+    nativeRepostSearchButton: ['.share_article_dialog .js_search_btn'],
     save: ['#js_submit button', '#js_submit'],
     publish: ['#js_send button', '#js_send']
   };
@@ -62,18 +67,28 @@
     return null;
   }
 
-  function selectContents(element) {
+  function isVisible(element) {
+    if (!element || !element.isConnected) return false;
+    const style = element.ownerDocument.defaultView.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden' && !element.hidden;
+  }
+
+  function selectContents(element, position = 'replace') {
     const selection = element.ownerDocument.getSelection();
     const range = element.ownerDocument.createRange();
     range.selectNodeContents(element);
+    if (position === 'top') range.collapse(true);
+    if (position === 'bottom') range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
   }
 
-  function pasteIntoEditable(element, html, text) {
+  function pasteIntoEditable(element, html, text, options = {}) {
     if (!element) throw new Error('未找到公众号正文编辑器，请刷新页面后重试');
+    const replace = options.replace !== false;
+    const position = replace ? 'replace' : (options.position === 'top' ? 'top' : 'bottom');
     element.focus();
-    selectContents(element);
+    selectContents(element, position);
 
     let handledByEditor = false;
     try {
@@ -87,11 +102,13 @@
     } catch { /* DataTransfer construction is unavailable in some Chrome versions. */ }
 
     if (!handledByEditor) {
-      selectContents(element);
+      selectContents(element, position);
       const command = html ? 'insertHTML' : 'insertText';
       const value = html || text;
       if (!element.ownerDocument.execCommand(command, false, value)) {
-        element.innerHTML = html || MoliMarkdown.escapeHtml(text);
+        const safeValue = html || MoliMarkdown.escapeHtml(text);
+        if (replace) element.innerHTML = safeValue;
+        else element.insertAdjacentHTML(position === 'top' ? 'afterbegin' : 'beforeend', safeValue);
       }
       element.dispatchEvent(new InputEvent('input', {
         bubbles: true,
@@ -192,6 +209,50 @@
     return `<section style="margin:20px 0 26px;padding:18px 18px 18px 20px;color:#40505d;background:#edf8f8;border-left:3px solid #2f9aa5;font-family:PingFang SC,Microsoft YaHei,sans-serif;font-size:14px;line-height:1.8;"><strong style="display:block;margin-bottom:7px;color:#2f9aa5;font-size:12px;letter-spacing:0.12em;">${MoliMarkdown.escapeHtml(label)}</strong>${escaped}</section>`;
   }
 
+  function nativeRepostState() {
+    const search = new URL(location.href).searchParams;
+    const dialog = findFirst(SELECTORS.nativeRepostDialog);
+    const source = findFirst(SELECTORS.nativeRepostSource);
+    const tip = findFirst(SELECTORS.nativeRepostTip);
+    const mode = search.get('share') === '1' || isVisible(dialog);
+    const modalVisible = isVisible(dialog);
+    const sourceVisible = isVisible(source);
+    const readOnlyTipVisible = isVisible(tip) && /不支持修改/.test(tip.textContent || '');
+    const ready = mode && !modalVisible && (sourceVisible || readOnlyTipVisible);
+    return {
+      mode,
+      modalVisible,
+      ready,
+      canModify: ready && Boolean(findBodyEditor()) && !readOnlyTipVisible
+    };
+  }
+
+  function validateWechatUrl(rawUrl) {
+    let url;
+    try { url = new URL(rawUrl); }
+    catch { throw new Error('请输入有效的公众号文章链接'); }
+    if (url.protocol !== 'https:' || url.hostname !== 'mp.weixin.qq.com') {
+      throw new Error('目前仅支持 https://mp.weixin.qq.com 的文章链接');
+    }
+    return url.toString();
+  }
+
+  function searchNativeRepost(payload) {
+    const url = validateWechatUrl(payload.url);
+    const input = findFirst(SELECTORS.nativeRepostSearch);
+    if (!input || !isVisible(findFirst(SELECTORS.nativeRepostDialog))) {
+      throw new Error('请先在公众号后台点击“转载”，进入转载文章窗口');
+    }
+    setNativeValue(input, url);
+    const searchButton = findFirst(SELECTORS.nativeRepostSearchButton);
+    if (searchButton) searchButton.click();
+    else {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+    }
+    return { message: '已在公众号中搜索原文，请选择文章并点击“确定”' };
+  }
+
   async function importRepost(payload) {
     if (!payload.permissionConfirmed) throw new Error('请先确认已获得转载及修改权限');
     const fetched = await chrome.runtime.sendMessage({ type: 'MOLI_FETCH_ARTICLE', url: payload.url });
@@ -207,7 +268,9 @@
     };
   }
 
-  function enhanceNativeRepost(payload) {
+  function applyNativeRepost(payload) {
+    const repost = nativeRepostState();
+    if (!repost.ready) throw new Error('请先在公众号转载窗口选中原文并点击“确定”');
     const titleField = findFirst(SELECTORS.nativeRepostTitle);
     const contentField = findFirst(SELECTORS.nativeRepostContent);
     if (!titleField || !contentField) {
@@ -215,7 +278,22 @@
     }
     setNativeValue(titleField, (payload.noteTitle || '编者荐语').slice(0, 10));
     pasteIntoEditable(contentField, '', (payload.note || '').slice(0, 120));
-    return { message: '已填写公众号原生转载荐语' };
+    const warnings = [];
+    if (payload.insertBody && payload.bodyNote?.trim()) {
+      if (repost.canModify) {
+        const note = editorNote(payload.bodyNote, payload.bodyNoteTitle || '编者按');
+        pasteIntoEditable(findBodyEditor(), note, plainTextFromHtml(note), {
+          replace: false,
+          position: payload.position
+        });
+      } else {
+        warnings.push('该原文未授予正文修改权限，已只填写官方荐语。');
+      }
+    }
+    return {
+      message: repost.canModify && payload.insertBody ? '已填写荐语并增补正文' : '已填写公众号原生转载荐语',
+      warnings
+    };
   }
 
   function imageWarnings(html) {
@@ -224,11 +302,14 @@
   }
 
   function editorStatus() {
-    const nativeRepost = Boolean(findFirst(SELECTORS.nativeRepostContent));
+    const repost = nativeRepostState();
     return {
-      titleEditor: Boolean(findFirst(SELECTORS.titleEditor)),
+      titleEditor: Boolean(findFirst(SELECTORS.titleEditor) || findFirst(SELECTORS.hiddenTitle)),
       bodyEditor: Boolean(findBodyEditor()),
-      nativeRepost,
+      nativeRepostMode: repost.mode,
+      nativeRepostModal: repost.modalVisible,
+      nativeRepostReady: repost.ready,
+      nativeRepostCanModify: repost.canModify,
       saveButton: Boolean(findFirst(SELECTORS.save)),
       publishButton: Boolean(findFirst(SELECTORS.publish)),
       url: location.pathname
@@ -246,8 +327,10 @@
     switch (action) {
       case 'STATUS': return editorStatus();
       case 'APPLY_MARKDOWN': return applyMarkdown(payload);
+      case 'SEARCH_NATIVE_REPOST': return searchNativeRepost(payload);
       case 'IMPORT_REPOST': return importRepost(payload);
-      case 'ENHANCE_NATIVE_REPOST': return enhanceNativeRepost(payload);
+      case 'APPLY_NATIVE_REPOST': return applyNativeRepost(payload);
+      case 'ENHANCE_NATIVE_REPOST': return applyNativeRepost(payload);
       case 'SAVE_DRAFT': return clickNative(SELECTORS.save, '未找到“保存为草稿”按钮');
       case 'OPEN_PUBLISH': return clickNative(SELECTORS.publish, '未找到“发表”按钮');
       case 'CLOSE_PANEL': drawer.classList.remove('is-open'); return { message: 'closed' };

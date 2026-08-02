@@ -28,6 +28,9 @@ button, .file-button { border: 1px solid #cbd9de; border-radius: 8px; background
 .mode-card textarea { min-height: 94px; font-family: inherit; }
 .positions label, .check { font-weight: 400; }
 .mode-card > button { width: 100%; min-height: 37px; }
+.capability { margin: 10px 0 13px; padding: 8px 10px; color: #6d7c87; background: #eef3f4; border-radius: 7px; font-size: 10px; }
+.capability.ready { color: #247f88; background: #e2f4f4; }
+.capability.readonly { color: #916239; background: #fff2e4; }
 footer { position: fixed; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 11px 17px; background: rgba(255,255,255,.96); border-top: 1px solid #dce6e9; }
 footer button { height: 38px; }
 footer #publishButton { color: #fff; background: #2f9aa5; border-color: #2f9aa5; }

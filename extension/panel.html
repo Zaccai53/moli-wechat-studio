@@ -32,23 +32,27 @@
 
     <section id="repostTab" class="tab-panel" hidden>
       <div class="mode-card">
-        <b>方式一：导入公开文章</b>
-        <p>读取公众号公开链接，将原文和编者按写入当前正文。</p>
+        <b>公众号原生转载（推荐）</b>
+        <p>由微信读取原文并保留图片、出处和授权状态；扩展只负责搜索和添加指定内容。</p>
         <label>公众号文章链接<input id="repostUrl" type="url" placeholder="https://mp.weixin.qq.com/s/…"></label>
-        <label>编者按标题<input id="noteTitle" type="text" value="编者按" maxlength="10"></label>
-        <label>添加内容<textarea id="note" rows="5" maxlength="120"></textarea></label>
+        <button id="searchNativeButton" type="button">在公众号转载窗口中搜索</button>
+        <div class="capability" id="repostCapability">尚未选择原文</div>
+        <label>荐语标题<input id="noteTitle" type="text" value="编者荐语" maxlength="10"></label>
+        <label>官方荐语（最多 120 字）<textarea id="note" rows="4" maxlength="120"></textarea></label>
+        <label class="check"><input id="insertBody" type="checkbox" checked> 有修改权限时，同时增补到正文</label>
+        <label>正文增补内容<textarea id="bodyNote" rows="5" placeholder="例如：转载说明、活动信息、补充观点……"></textarea></label>
         <div class="row two positions">
-          <label><input type="radio" name="position" value="top" checked> 放在文首</label>
-          <label><input type="radio" name="position" value="bottom"> 放在文末</label>
+          <label><input type="radio" name="nativePosition" value="top" checked> 放在文首</label>
+          <label><input type="radio" name="nativePosition" value="bottom"> 放在文末</label>
         </div>
-        <label class="check"><input id="permission" type="checkbox"> 我已获得转载及修改权限</label>
-        <button class="primary" id="importButton" type="button">读取并写入正文</button>
+        <button class="primary" id="applyNativeButton" type="button">应用到原生转载</button>
       </div>
 
       <div class="mode-card">
-        <b>方式二：增强原生转载</b>
-        <p>若当前页面由公众号“转载”流程打开，则只填写官方的编者荐语，不重建原文。</p>
-        <button id="enhanceButton" type="button">填写原生转载荐语</button>
+        <b>公开正文直导（备用）</b>
+        <p>仅在文章无法走公众号原生转载、且你已获得复制修改授权时使用；微信可能拦截自动读取。</p>
+        <label class="check"><input id="permission" type="checkbox"> 我已获得转载及修改权限</label>
+        <button id="importButton" type="button">尝试直接读取公开正文</button>
       </div>
     </section>
   </main>

@@ -17,9 +17,12 @@ async function fetchArticle(rawUrl) {
   if (url.protocol !== 'https:' || url.hostname !== ALLOWED_HOST) {
     throw new Error('目前仅支持 https://mp.weixin.qq.com 的文章链接');
   }
-  const response = await fetch(url.toString(), { credentials: 'omit', redirect: 'follow' });
+  const response = await fetch(url.toString(), { credentials: 'include', redirect: 'follow' });
   if (!response.ok) throw new Error(`读取原文失败（HTTP ${response.status}）`);
   const html = await response.text();
+  if (html.includes('secitptpage/verify') || html.includes('当前环境异常')) {
+    throw new Error('微信拦截了公开页面直读，请改用“公众号原生转载”搜索');
+  }
   if (!html.includes('js_content')) throw new Error('页面中未找到公众号正文，链接可能已失效或需要验证');
   return { html, finalUrl: response.url };
 }

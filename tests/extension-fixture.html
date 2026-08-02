@@ -3,7 +3,7 @@
 <body>
   <div id="js_title_main">
     <textarea id="title"></textarea>
-    <div class="title-editor-overlay"><div class="title-editor__input"><div class="ProseMirror" contenteditable="true"><br></div></div></div>
+    <div id="js_title_editor_mount"></div>
   </div>
   <input id="author" class="js_author" type="text">
   <textarea id="js_description" class="js_desc"></textarea>
@@ -11,8 +11,15 @@
   <div id="edui1_iframeholder">
     <div id="ueditor_0"><div class="rich_media_content"><div class="ProseMirror" contenteditable="true"><p>旧内容</p></div></div></div>
   </div>
-  <input class="js_reprint_recommend_title" type="text">
-  <div class="js_reprint_recommend_content" contenteditable="true"></div>
+  <div id="js_reprint_article_tips" style="display:none"><p class="js_content">当前为开放转载文章，不支持修改</p></div>
+  <div id="js_reprint_source" style="display:block">
+    <input class="js_reprint_recommend_title" type="text">
+    <div class="js_reprint_recommend_content" contenteditable="true"></div>
+  </div>
+  <div class="dialog_wrp share_article_dialog" style="display:none">
+    <input class="js_search_input" type="text">
+    <button class="js_search_btn" type="button" onclick="window.searched=(window.searched||0)+1">搜索</button>
+  </div>
   <span id="js_submit"><button type="button" onclick="window.saved=(window.saved||0)+1">保存为草稿</button></span>
   <span id="js_send"><button type="button" onclick="window.published=(window.published||0)+1">发表</button></span>
 </body>

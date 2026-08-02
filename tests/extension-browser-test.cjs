@@ -9,7 +9,7 @@ const { chromium } = require('playwright');
     executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
   });
   const page = await browser.newPage();
-  await page.goto(`file://${path.join(__dirname, 'extension-fixture.html')}`);
+  await page.goto(`file://${path.join(__dirname, 'extension-fixture.html')}?share=1`);
   await page.addInitScript(() => {
     window.chrome = {
       runtime: {
@@ -42,7 +42,9 @@ const { chromium } = require('playwright');
   const status = await request('STATUS');
   assert.equal(status.titleEditor, true);
   assert.equal(status.bodyEditor, true);
-  assert.equal(status.nativeRepost, true);
+  assert.equal(status.nativeRepostMode, true);
+  assert.equal(status.nativeRepostReady, true);
+  assert.equal(status.nativeRepostCanModify, true);
 
   await request('APPLY_MARKDOWN', {
     markdown: '# 注入测试\n\n## 小标题\n\n正文带有 **重点**。',
@@ -54,9 +56,22 @@ const { chromium } = require('playwright');
   assert.match(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), /小标题/);
   assert.match(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), /重点/);
 
-  await request('ENHANCE_NATIVE_REPOST', { noteTitle: '荐语', note: '值得一读' });
+  await request('APPLY_NATIVE_REPOST', {
+    noteTitle: '荐语',
+    note: '值得一读',
+    insertBody: true,
+    bodyNote: '补充说明',
+    position: 'top'
+  });
   assert.equal(await page.locator('.js_reprint_recommend_title').inputValue(), '荐语');
   assert.equal(await page.locator('.js_reprint_recommend_content').innerText(), '值得一读');
+  assert.match(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), /补充说明/);
+  assert.match(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), /小标题/);
+
+  await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'block'; });
+  await request('SEARCH_NATIVE_REPOST', { url: 'https://mp.weixin.qq.com/s/example' });
+  assert.equal(await page.locator('.js_search_input').inputValue(), 'https://mp.weixin.qq.com/s/example');
+  assert.equal(await page.evaluate(() => window.searched), 1);
 
   await request('SAVE_DRAFT');
   await request('OPEN_PUBLISH');

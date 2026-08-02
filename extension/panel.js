@@ -72,29 +72,65 @@ $('#applyButton').addEventListener('click', () => run($('#applyButton'), 'APPLY_
   options: { theme: $('#theme').value, rhythm: $('#rhythm').value }
 }, '正在写入…'));
 
+async function refreshEditorStatus() {
+  const status = await request('STATUS');
+  const badge = $('#editorBadge');
+  const capability = $('#repostCapability');
+  badge.className = '';
+  capability.className = 'capability';
+  if (status.nativeRepostReady) {
+    if (status.nativeRepostCanModify) {
+      badge.textContent = '转载可修改';
+      capability.textContent = '已识别转载原文，可以填写荐语并增补正文。';
+      capability.classList.add('ready');
+    } else {
+      badge.textContent = '仅可荐语';
+      capability.textContent = '该原文不允许修改正文，将只填写公众号官方荐语。';
+      capability.classList.add('readonly');
+    }
+    badge.classList.add('ready');
+  } else if (status.nativeRepostMode) {
+    badge.textContent = status.nativeRepostModal ? '选择转载文章' : '等待原文载入';
+    capability.textContent = '请在公众号转载窗口搜索并选择原文。';
+  } else if (status.bodyEditor && status.titleEditor) {
+    badge.textContent = '编辑器已连接';
+    badge.classList.add('ready');
+    capability.textContent = '请先点击公众号页面中的“转载”，再搜索原文。';
+  } else {
+    badge.textContent = '编辑器未就绪';
+  }
+  return status;
+}
+
+$('#searchNativeButton').addEventListener('click', async () => {
+  const result = await run($('#searchNativeButton'), 'SEARCH_NATIVE_REPOST', {
+    url: $('#repostUrl').value
+  }, '正在搜索…');
+  if (result) setTimeout(() => request('CLOSE_PANEL'), 650);
+});
+
+$('#applyNativeButton').addEventListener('click', async () => {
+  const result = await run($('#applyNativeButton'), 'APPLY_NATIVE_REPOST', {
+    noteTitle: $('#noteTitle').value,
+    note: $('#note').value,
+    insertBody: $('#insertBody').checked,
+    bodyNoteTitle: '编者按',
+    bodyNote: $('#bodyNote').value,
+    position: document.querySelector('input[name="nativePosition"]:checked').value
+  }, '正在应用…');
+  if (result) refreshEditorStatus();
+});
+
 $('#importButton').addEventListener('click', () => run($('#importButton'), 'IMPORT_REPOST', {
   url: $('#repostUrl').value,
   noteTitle: $('#noteTitle').value,
-  note: $('#note').value,
-  position: document.querySelector('input[name="position"]:checked').value,
+  note: $('#bodyNote').value || $('#note').value,
+  position: document.querySelector('input[name="nativePosition"]:checked').value,
   permissionConfirmed: $('#permission').checked
 }, '正在读取原文…'));
-
-$('#enhanceButton').addEventListener('click', () => run($('#enhanceButton'), 'ENHANCE_NATIVE_REPOST', {
-  noteTitle: $('#noteTitle').value,
-  note: $('#note').value
-}, '正在填写…'));
 
 $('#saveButton').addEventListener('click', () => run($('#saveButton'), 'SAVE_DRAFT', {}, '正在保存…'));
 $('#publishButton').addEventListener('click', () => run($('#publishButton'), 'OPEN_PUBLISH', {}, '正在打开…'));
 $('#closeButton').addEventListener('click', () => request('CLOSE_PANEL'));
 
-request('STATUS').then(status => {
-  const badge = $('#editorBadge');
-  if (status.bodyEditor && status.titleEditor) {
-    badge.textContent = status.nativeRepost ? '原生转载可用' : '编辑器已连接';
-    badge.classList.add('ready');
-  } else {
-    badge.textContent = '编辑器未就绪';
-  }
-}).catch(() => { $('#editorBadge').textContent = '连接失败'; });
+refreshEditorStatus().catch(() => { $('#editorBadge').textContent = '连接失败'; });
