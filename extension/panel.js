@@ -3,6 +3,7 @@
 let requestCounter = 0;
 const pending = new Map();
 const $ = selector => document.querySelector(selector);
+let tailImage = null;
 
 function request(action, payload = {}) {
   const requestId = `moli-${Date.now()}-${requestCounter += 1}`;
@@ -65,6 +66,25 @@ $('#fileInput').addEventListener('change', async event => {
   showStatus(`已读取 ${file.name}`);
 });
 
+$('#tailImageInput').addEventListener('change', async event => {
+  const [file] = event.target.files;
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    tailImage = null;
+    showStatus('结尾图片不能超过 10MB', true);
+    return;
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+  tailImage = { dataUrl, name: file.name, type: file.type };
+  $('#tailImageStatus').textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB`;
+  $('#tailImageStatus').classList.add('ready');
+});
+
 $('#applyButton').addEventListener('click', () => run($('#applyButton'), 'APPLY_MARKDOWN', {
   markdown: $('#markdown').value,
   title: $('#title').value,
@@ -102,6 +122,14 @@ async function refreshEditorStatus() {
   return status;
 }
 
+function supplements() {
+  return {
+    titleMode: document.querySelector('input[name="titleMode"]:checked').value,
+    customTitle: $('#customTitle').value,
+    tailImage
+  };
+}
+
 $('#searchNativeButton').addEventListener('click', async () => {
   const result = await run($('#searchNativeButton'), 'SEARCH_NATIVE_REPOST', {
     url: $('#repostUrl').value
@@ -111,6 +139,7 @@ $('#searchNativeButton').addEventListener('click', async () => {
 
 $('#applyNativeButton').addEventListener('click', async () => {
   const result = await run($('#applyNativeButton'), 'APPLY_NATIVE_REPOST', {
+    ...supplements(),
     noteTitle: $('#noteTitle').value,
     note: $('#note').value,
     insertBody: $('#insertBody').checked,
@@ -122,9 +151,11 @@ $('#applyNativeButton').addEventListener('click', async () => {
 });
 
 $('#importButton').addEventListener('click', () => run($('#importButton'), 'IMPORT_REPOST', {
+  ...supplements(),
   url: $('#repostUrl').value,
   noteTitle: $('#noteTitle').value,
-  note: $('#bodyNote').value || $('#note').value,
+  note: $('#note').value,
+  bodyNote: $('#bodyNote').value,
   position: document.querySelector('input[name="nativePosition"]:checked').value,
   permissionConfirmed: $('#permission').checked
 }, '正在读取原文…'));

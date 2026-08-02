@@ -14,7 +14,21 @@ const { chromium } = require('playwright');
     window.chrome = {
       runtime: {
         getURL: () => 'about:blank',
-        sendMessage: async () => ({ ok: false, error: 'not used in this fixture' })
+        sendMessage: async message => {
+          if (message.type !== 'MOLI_FETCH_ARTICLE') return { ok: false, error: 'unknown fixture request' };
+          return {
+            ok: true,
+            finalUrl: message.url,
+            html: `<!doctype html><html><head>
+              <meta property="og:title" content="公开文章">
+              <meta property="og:description" content="公开文章摘要">
+              <meta property="og:article:author" content="来源公众号">
+            </head><body>
+              <span id="js_name">来源公众号</span><span id="js_author_name">作者乙</span>
+              <div id="js_content"><p>公开正文</p></div>
+            </body></html>`
+          };
+        }
       }
     };
   });
@@ -61,17 +75,64 @@ const { chromium } = require('playwright');
     note: '值得一读',
     insertBody: true,
     bodyNote: '补充说明',
-    position: 'top'
+    position: 'top',
+    titleMode: 'prefix',
+    tailImage: {
+      name: 'tail.png',
+      type: 'image/png',
+      dataUrl: 'data:image/png;base64,iVBORw0KGgo='
+    }
   });
   assert.equal(await page.locator('.js_reprint_recommend_title').inputValue(), '荐语');
   assert.equal(await page.locator('.js_reprint_recommend_content').innerText(), '值得一读');
   assert.match(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), /补充说明/);
   assert.match(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), /小标题/);
+  assert.match(await page.locator('#ueditor_0 .ProseMirror').innerText(), /以下文章来源于来源公众号，作者作者甲/);
+  assert.match(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), /data:image\/png/);
+  assert.equal(await page.locator('#title').inputValue(), '活动推荐 | 注入测试');
+  const nativeText = await page.locator('#ueditor_0 .ProseMirror').innerText();
+  assert.ok(nativeText.indexOf('以下文章来源于') < nativeText.indexOf('补充说明'));
 
   await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'block'; });
   await request('SEARCH_NATIVE_REPOST', { url: 'https://mp.weixin.qq.com/s/example' });
   assert.equal(await page.locator('.js_search_input').inputValue(), 'https://mp.weixin.qq.com/s/example');
   assert.equal(await page.evaluate(() => window.searched), 1);
+
+  await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'none'; });
+  await page.locator('#js_reprint_article_tips').evaluate(element => { element.style.display = 'block'; });
+  const lockedTitle = await page.locator('#title').inputValue();
+  const lockedBody = await page.locator('#ueditor_0 .ProseMirror').innerHTML();
+  const lockedResult = await request('APPLY_NATIVE_REPOST', {
+    noteTitle: '荐语',
+    note: '只允许荐语',
+    insertBody: true,
+    bodyNote: '不能写入的内容',
+    titleMode: 'custom',
+    customTitle: '不能修改的标题'
+  });
+  assert.equal(await page.locator('#title').inputValue(), lockedTitle);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), lockedBody);
+  assert.match(lockedResult.warnings.join(''), /未授予正文修改权限/);
+  await page.locator('#js_reprint_article_tips').evaluate(element => { element.style.display = 'none'; });
+
+  await request('IMPORT_REPOST', {
+    url: 'https://mp.weixin.qq.com/s/public-example',
+    permissionConfirmed: true,
+    titleMode: 'custom',
+    customTitle: '自定义活动标题',
+    note: '推荐理由',
+    bodyNote: '文末补充',
+    position: 'bottom',
+    tailImage: {
+      name: 'tail.png',
+      type: 'image/png',
+      dataUrl: 'data:image/png;base64,iVBORw0KGgo='
+    }
+  });
+  assert.equal(await page.locator('#title').inputValue(), '自定义活动标题');
+  assert.match(await page.locator('#ueditor_0 .ProseMirror').innerText(), /以下文章来源于来源公众号，作者作者乙/);
+  assert.match(await page.locator('#ueditor_0 .ProseMirror').innerText(), /公开正文/);
+  assert.match(await page.locator('#ueditor_0 .ProseMirror').innerText(), /文末补充/);
 
   await request('SAVE_DRAFT');
   await request('OPEN_PUBLISH');

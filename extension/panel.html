@@ -37,21 +37,29 @@
         <label>公众号文章链接<input id="repostUrl" type="url" placeholder="https://mp.weixin.qq.com/s/…"></label>
         <button id="searchNativeButton" type="button">在公众号转载窗口中搜索</button>
         <div class="capability" id="repostCapability">尚未选择原文</div>
+        <div class="subsection-title">增补设置</div>
+        <div class="title-options">
+          <label><input type="radio" name="titleMode" value="prefix" checked> 标题开头添加“活动推荐 |”</label>
+          <label><input type="radio" name="titleMode" value="custom"> 使用自定义标题</label>
+        </div>
+        <label>自定义标题<input id="customTitle" type="text" maxlength="64" placeholder="选择自定义标题时填写"></label>
         <label>荐语标题<input id="noteTitle" type="text" value="编者荐语" maxlength="10"></label>
         <label>官方荐语（最多 120 字）<textarea id="note" rows="4" maxlength="120"></textarea></label>
-        <label class="check"><input id="insertBody" type="checkbox" checked> 有修改权限时，同时增补到正文</label>
+        <label class="check"><input id="insertBody" type="checkbox" checked> 有修改权限时，添加来源署名、增补内容和尾图</label>
         <label>正文增补内容<textarea id="bodyNote" rows="5" placeholder="例如：转载说明、活动信息、补充观点……"></textarea></label>
         <div class="row two positions">
           <label><input type="radio" name="nativePosition" value="top" checked> 放在文首</label>
           <label><input type="radio" name="nativePosition" value="bottom"> 放在文末</label>
         </div>
+        <label class="file-button tail-image-button">选择结尾图片<input id="tailImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp"></label>
+        <div class="image-file-status" id="tailImageStatus">尚未选择结尾图片</div>
         <button class="primary" id="applyNativeButton" type="button">应用到原生转载</button>
       </div>
 
       <div class="mode-card">
         <b>公开正文直导（备用）</b>
         <p>仅在文章无法走公众号原生转载、且你已获得复制修改授权时使用；微信可能拦截自动读取。</p>
-        <label class="check"><input id="permission" type="checkbox"> 我已获得转载及修改权限</label>
+        <label class="check"><input id="permission" type="checkbox"> 我已获得作者单独授权，可以复制并修改该文章</label>
         <button id="importButton" type="button">尝试直接读取公开正文</button>
       </div>
     </section>

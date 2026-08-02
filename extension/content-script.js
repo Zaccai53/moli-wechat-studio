@@ -138,6 +138,23 @@
     setNativeValue(findFirst(SELECTORS.hiddenTitle), title);
   }
 
+  function currentTitle() {
+    return findFirst(SELECTORS.titleEditor)?.textContent?.trim()
+      || findFirst(SELECTORS.hiddenTitle)?.value?.trim()
+      || '';
+  }
+
+  function transformedTitle(originalTitle, payload) {
+    const original = String(originalTitle || '').trim();
+    if (payload.titleMode === 'custom') {
+      const custom = String(payload.customTitle || '').trim();
+      if (!custom) throw new Error('选择自定义标题后，需要填写新标题');
+      return custom.slice(0, 64);
+    }
+    const prefix = '活动推荐 | ';
+    return (original.startsWith(prefix) ? original : `${prefix}${original}`).slice(0, 64);
+  }
+
   function setArticleMetadata(payload) {
     if (payload.title) setTitle(payload.title);
     if (payload.author) setNativeValue(findFirst(SELECTORS.author), payload.author.slice(0, 8));
@@ -188,6 +205,14 @@
     return clone.innerHTML;
   }
 
+  function scriptString(html, variableName) {
+    const escapedName = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = html.match(new RegExp(`(?:var\\s+)?${escapedName}\\s*=\\s*("(?:\\\\.|[^"\\\\])*")`));
+    if (!match) return '';
+    try { return JSON.parse(match[1]); }
+    catch { return ''; }
+  }
+
   function parseWechatArticle(html, sourceUrl) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const content = doc.querySelector('#js_content');
@@ -196,17 +221,79 @@
       || doc.querySelector('#activity-name')?.textContent?.trim()
       || doc.querySelector('h1')?.textContent?.trim()
       || '转载文章';
-    const author = getMeta(doc, 'og:article:author')
-      || doc.querySelector('#js_name')?.textContent?.trim()
+    const publisher = doc.querySelector('#js_name')?.textContent?.trim()
+      || scriptString(html, 'nickname')
+      || getMeta(doc, 'og:article:author')
       || '';
+    const author = doc.querySelector('#js_author_name, .rich_media_meta_text.rich_media_meta_nickname')?.textContent?.trim()
+      || scriptString(html, 'author')
+      || getMeta(doc, 'author')
+      || publisher;
     const digest = getMeta(doc, 'og:description');
-    return { title, author, digest, sourceUrl, content: sanitizeArticleContent(content) };
+    const isOriginal = Boolean(doc.querySelector('#copyright_logo, #js_original_tag'))
+      || /copyright_stat\s*=\s*["']?[1-9]/.test(html);
+    return { title, author, publisher, digest, sourceUrl, isOriginal, content: sanitizeArticleContent(content) };
   }
 
   function editorNote(text, label = '编者按') {
     if (!text?.trim()) return '';
     const escaped = MoliMarkdown.escapeHtml(text.trim()).replace(/\n/g, '<br>');
     return `<section style="margin:20px 0 26px;padding:18px 18px 18px 20px;color:#40505d;background:#edf8f8;border-left:3px solid #2f9aa5;font-family:PingFang SC,Microsoft YaHei,sans-serif;font-size:14px;line-height:1.8;"><strong style="display:block;margin-bottom:7px;color:#2f9aa5;font-size:12px;letter-spacing:0.12em;">${MoliMarkdown.escapeHtml(label)}</strong>${escaped}</section>`;
+  }
+
+  function attributionBlock(publisher, author) {
+    const sourceName = String(publisher || '').trim();
+    const authorName = String(author || '').trim();
+    if (!sourceName && !authorName) return '';
+    const source = MoliMarkdown.escapeHtml(sourceName || '原公众号');
+    const writer = MoliMarkdown.escapeHtml(authorName || '原作者');
+    return `<p style="margin:18px 0 24px;padding:12px 15px;color:#52616d;background:#f2f6f7;border-radius:4px;font-family:PingFang SC,Microsoft YaHei,sans-serif;font-size:14px;line-height:1.8;">以下文章来源于<strong style="color:#2f7780;font-weight:700;">${source}</strong>，作者<strong style="color:#2f7780;font-weight:700;">${writer}</strong></p>`;
+  }
+
+  function dataUrlToFile(image) {
+    if (!image?.dataUrl || !/^data:image\//i.test(image.dataUrl)) throw new Error('尾图数据无效，请重新选择图片');
+    const [header, encoded] = image.dataUrl.split(',', 2);
+    const mimeType = header.match(/^data:([^;]+)/i)?.[1] || image.type || 'image/png';
+    const binary = atob(encoded || '');
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return new File([bytes], image.name || 'moli-tail-image.png', { type: mimeType });
+  }
+
+  function pasteImageIntoEditable(element, image) {
+    if (!image?.dataUrl) return { inserted: false, uploadedByWechat: false };
+    if (!element) throw new Error('未找到可插入尾图的正文编辑器');
+    element.focus();
+    selectContents(element, 'bottom');
+    let handledByWechat = false;
+    try {
+      const transfer = new DataTransfer();
+      transfer.items.add(dataUrlToFile(image));
+      const pasteEvent = new ClipboardEvent('paste', {
+        bubbles: true, cancelable: true, composed: true, clipboardData: transfer
+      });
+      handledByWechat = !element.dispatchEvent(pasteEvent);
+    } catch { /* Fall through to a data URL image for older Chrome builds. */ }
+    if (!handledByWechat) {
+      selectContents(element, 'bottom');
+      const safeDataUrl = /^data:image\/(png|jpeg|jpg|gif|webp);base64,[a-z0-9+/=]+$/i.test(image.dataUrl)
+        ? image.dataUrl : '';
+      if (!safeDataUrl) throw new Error('尾图格式不受支持');
+      const html = `<p style="margin:26px 0 0;text-align:center;"><img src="${safeDataUrl}" alt="" style="display:block;max-width:100%;height:auto;margin:0 auto;" /></p>`;
+      if (!element.ownerDocument.execCommand('insertHTML', false, html)) element.insertAdjacentHTML('beforeend', html);
+      element.dispatchEvent(new InputEvent('input', {
+        bubbles: true, composed: true, inputType: 'insertFromPaste', data: null
+      }));
+    }
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return { inserted: true, uploadedByWechat: handledByWechat };
+  }
+
+  function nativeRepostMetadata() {
+    return {
+      publisher: document.querySelector('.js_reprint_biz_nickname')?.textContent?.trim() || '',
+      author: document.querySelector('.js_reprint_author')?.textContent?.trim() || ''
+    };
   }
 
   function nativeRepostState() {
@@ -258,13 +345,22 @@
     const fetched = await chrome.runtime.sendMessage({ type: 'MOLI_FETCH_ARTICLE', url: payload.url });
     if (!fetched?.ok) throw new Error(fetched?.error || '读取原文失败');
     const article = parseWechatArticle(fetched.html, fetched.finalUrl || payload.url);
-    const note = editorNote(payload.note, payload.noteTitle || '编者按');
-    const content = payload.position === 'bottom' ? article.content + note : note + article.content;
-    setArticleMetadata(article);
+    const attribution = attributionBlock(article.publisher, article.author);
+    const note = editorNote(payload.bodyNote || payload.note, payload.bodyNoteTitle || '编者按');
+    let content = attribution + article.content;
+    if (note) content = payload.position === 'bottom' ? content + note : attribution + note + article.content;
+    setArticleMetadata({
+      ...article,
+      title: transformedTitle(article.title, payload)
+    });
     pasteIntoEditable(findBodyEditor(), content, plainTextFromHtml(content));
+    const imageResult = pasteImageIntoEditable(findBodyEditor(), payload.tailImage);
+    const warnings = imageWarnings(content);
+    if (imageResult.inserted && !imageResult.uploadedByWechat) warnings.push('尾图已插入，保存前请确认公众号完成图片转存。');
+    if (!article.isOriginal) warnings.push('未检测到原创标识，已按普通新文章导入。');
     return {
       message: `已导入《${article.title}》`,
-      warnings: imageWarnings(content)
+      warnings
     };
   }
 
@@ -279,15 +375,26 @@
     setNativeValue(titleField, (payload.noteTitle || '编者荐语').slice(0, 10));
     pasteIntoEditable(contentField, '', (payload.note || '').slice(0, 120));
     const warnings = [];
-    if (payload.insertBody && payload.bodyNote?.trim()) {
+    if (repost.canModify) {
+      setTitle(transformedTitle(currentTitle(), payload));
+    }
+    if (payload.insertBody) {
       if (repost.canModify) {
+        const metadata = nativeRepostMetadata();
+        const attribution = attributionBlock(metadata.publisher, metadata.author);
         const note = editorNote(payload.bodyNote, payload.bodyNoteTitle || '编者按');
-        pasteIntoEditable(findBodyEditor(), note, plainTextFromHtml(note), {
-          replace: false,
-          position: payload.position
-        });
+        if (note && payload.position === 'top') {
+          pasteIntoEditable(findBodyEditor(), note, plainTextFromHtml(note), { replace: false, position: 'top' });
+        }
+        if (attribution) pasteIntoEditable(findBodyEditor(), attribution, plainTextFromHtml(attribution), { replace: false, position: 'top' });
+        if (note && payload.position === 'bottom') {
+          pasteIntoEditable(findBodyEditor(), note, plainTextFromHtml(note), { replace: false, position: 'bottom' });
+        }
+        const imageResult = pasteImageIntoEditable(findBodyEditor(), payload.tailImage);
+        if (imageResult.inserted && !imageResult.uploadedByWechat) warnings.push('尾图已插入，保存前请确认公众号完成图片转存。');
+        if (!metadata.publisher || !metadata.author) warnings.push('来源账号或作者未完整识别，请检查文首署名。');
       } else {
-        warnings.push('该原文未授予正文修改权限，已只填写官方荐语。');
+        warnings.push('该原文未授予正文修改权限，未改标题和正文；如有单独授权，可使用下方公开正文直导。');
       }
     }
     return {
@@ -303,6 +410,7 @@
 
   function editorStatus() {
     const repost = nativeRepostState();
+    const metadata = nativeRepostMetadata();
     return {
       titleEditor: Boolean(findFirst(SELECTORS.titleEditor) || findFirst(SELECTORS.hiddenTitle)),
       bodyEditor: Boolean(findBodyEditor()),
@@ -310,6 +418,8 @@
       nativeRepostModal: repost.modalVisible,
       nativeRepostReady: repost.ready,
       nativeRepostCanModify: repost.canModify,
+      nativePublisher: metadata.publisher,
+      nativeAuthor: metadata.author,
       saveButton: Boolean(findFirst(SELECTORS.save)),
       publishButton: Boolean(findFirst(SELECTORS.publish)),
       url: location.pathname
