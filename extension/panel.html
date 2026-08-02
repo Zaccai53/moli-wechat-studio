@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>墨流排版助手</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header>
+    <div><strong>墨流</strong><span id="editorBadge">检测编辑器…</span></div>
+    <button id="closeButton" type="button" aria-label="关闭">×</button>
+  </header>
+
+  <nav role="tablist">
+    <button class="active" data-tab="markdown" type="button">Markdown</button>
+    <button data-tab="repost" type="button">转载</button>
+  </nav>
+
+  <main>
+    <section id="markdownTab" class="tab-panel">
+      <div class="row two">
+        <label>风格<select id="theme"><option value="clear">澄明蓝</option><option value="zen">赛博禅</option><option value="pulse">数字脉冲</option></select></label>
+        <label>节奏<select id="rhythm"><option value="relaxed">舒展</option><option value="compact">紧凑</option><option value="airy">留白</option></select></label>
+      </div>
+      <label>标题（留空则读取一级标题）<input id="title" type="text" maxlength="64"></label>
+      <label>作者<input id="author" type="text" maxlength="8"></label>
+      <label>Markdown 正文<textarea id="markdown" spellcheck="false" placeholder="# 标题&#10;&#10;从这里开始写正文…"></textarea></label>
+      <label class="file-button">导入 .md / .txt<input id="fileInput" type="file" accept=".md,.markdown,.txt,text/plain,text/markdown"></label>
+      <button class="primary" id="applyButton" type="button">排版并写入正文</button>
+    </section>
+
+    <section id="repostTab" class="tab-panel" hidden>
+      <div class="mode-card">
+        <b>方式一：导入公开文章</b>
+        <p>读取公众号公开链接，将原文和编者按写入当前正文。</p>
+        <label>公众号文章链接<input id="repostUrl" type="url" placeholder="https://mp.weixin.qq.com/s/…"></label>
+        <label>编者按标题<input id="noteTitle" type="text" value="编者按" maxlength="10"></label>
+        <label>添加内容<textarea id="note" rows="5" maxlength="120"></textarea></label>
+        <div class="row two positions">
+          <label><input type="radio" name="position" value="top" checked> 放在文首</label>
+          <label><input type="radio" name="position" value="bottom"> 放在文末</label>
+        </div>
+        <label class="check"><input id="permission" type="checkbox"> 我已获得转载及修改权限</label>
+        <button class="primary" id="importButton" type="button">读取并写入正文</button>
+      </div>
+
+      <div class="mode-card">
+        <b>方式二：增强原生转载</b>
+        <p>若当前页面由公众号“转载”流程打开，则只填写官方的编者荐语，不重建原文。</p>
+        <button id="enhanceButton" type="button">填写原生转载荐语</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <button id="saveButton" type="button">保存为草稿</button>
+    <button id="publishButton" type="button">进入发表确认</button>
+  </footer>
+  <div id="status" role="status"></div>
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "墨流 · 公众号排版助手",
+  "version": "0.1.0",
+  "description": "在微信公众号编辑器内完成 Markdown 排版、转载加工与草稿保存。",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://mp.weixin.qq.com/*",
+    "https://mmbiz.qpic.cn/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mp.weixin.qq.com/cgi-bin/appmsg*"],
+      "js": ["lib/markdown.js", "content-script.js"],
+      "css": ["content-style.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["panel.html", "panel.css", "panel.js"],
+      "matches": ["https://mp.weixin.qq.com/*"]
+    }
+  ],
+  "action": {
+    "default_title": "打开墨流排版助手"
+  }
+}

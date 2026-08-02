@@ -1,0 +1,13 @@
+{
+  "name": "moli-wechat-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "微信公众号排版、转载与发布工作台",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check extension/service-worker.js && node --check extension/content-script.js && node --check extension/panel.js && node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

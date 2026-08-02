@@ -1,0 +1,42 @@
+#moli-extension-host {
+  all: initial;
+  position: fixed;
+  right: 18px;
+  bottom: 84px;
+  z-index: 2147483646;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+}
+
+#moli-extension-host .moli-launcher {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: #17243b;
+  box-shadow: 0 10px 30px rgba(20, 40, 60, .25);
+  cursor: pointer;
+  font: 700 14px/44px "PingFang SC", sans-serif;
+  letter-spacing: .08em;
+}
+
+#moli-extension-host .moli-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 390px;
+  max-width: calc(100vw - 40px);
+  background: #f7fafb;
+  border-left: 1px solid #dbe5e9;
+  box-shadow: -18px 0 60px rgba(24, 42, 56, .17);
+  transform: translateX(105%);
+  transition: transform .22s ease;
+}
+
+#moli-extension-host .moli-drawer.is-open { transform: translateX(0); }
+#moli-extension-host iframe { width: 100%; height: 100%; border: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  #moli-extension-host .moli-drawer { transition: none; }
+}
