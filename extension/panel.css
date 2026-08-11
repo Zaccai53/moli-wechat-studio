@@ -37,6 +37,9 @@ button, .file-button { border: 1px solid #cbd9de; border-radius: 8px; background
 .tail-image-button { margin-bottom: 6px; }
 .image-file-status { margin: 0 0 13px; color: #89959e; font-size: 10px; text-align: center; }
 .image-file-status.ready { color: #247f88; }
+.link-button { display: block; margin: -5px auto 12px; padding: 3px 5px; color: #71818b; border: 0; background: transparent; font-size: 10px; }
+.link-button:hover { color: #247f88; text-decoration: underline; }
+.settings-hint { margin: 0 0 12px; color: #9aa5ad; text-align: center; font-size: 9px; }
 footer { position: fixed; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 11px 17px; background: rgba(255,255,255,.96); border-top: 1px solid #dce6e9; }
 footer button { height: 38px; }
 footer #publishButton { color: #fff; background: #2f9aa5; border-color: #2f9aa5; }

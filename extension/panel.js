@@ -4,6 +4,77 @@ let requestCounter = 0;
 const pending = new Map();
 const $ = selector => document.querySelector(selector);
 let tailImage = null;
+const DEFAULT_SETTINGS = {
+  titleMode: 'prefix',
+  customTitle: '',
+  noteTitle: '编者荐语',
+  note: '',
+  insertBody: true,
+  bodyNote: '',
+  nativePosition: 'top',
+  tailImage: null
+};
+let persistTimer;
+
+function collectSettings() {
+  return {
+    titleMode: document.querySelector('input[name="titleMode"]:checked')?.value || DEFAULT_SETTINGS.titleMode,
+    customTitle: $('#customTitle').value,
+    noteTitle: $('#noteTitle').value,
+    note: $('#note').value,
+    insertBody: $('#insertBody').checked,
+    bodyNote: $('#bodyNote').value,
+    nativePosition: document.querySelector('input[name="nativePosition"]:checked')?.value || DEFAULT_SETTINGS.nativePosition,
+    tailImage
+  };
+}
+
+async function persistSettings() {
+  if (!globalThis.chrome?.storage?.local) return;
+  const settings = collectSettings();
+  // chrome.storage.local has a finite quota; keep the active image in memory even when it is too large to persist.
+  if (settings.tailImage?.dataUrl?.length > 5_500_000) settings.tailImage = null;
+  try { await chrome.storage.local.set({ moliSettings: settings }); }
+  catch { showStatus('默认设置保存失败，可能是结尾图片过大', true); }
+}
+
+function schedulePersist() {
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(persistSettings, 180);
+}
+
+function setImageStatus(image) {
+  const node = $('#tailImageStatus');
+  if (!image) {
+    node.textContent = '尚未选择结尾图片';
+    node.classList.remove('ready');
+    return;
+  }
+  const size = image.dataUrl ? `${(image.dataUrl.length * 0.75 / 1024).toFixed(0)} KB` : '已保存';
+  node.textContent = `${image.name || '默认结尾图片'} · ${size}`;
+  node.classList.add('ready');
+}
+
+function applySettings(settings) {
+  const value = { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  const titleRadio = document.querySelector(`input[name="titleMode"][value="${value.titleMode}"]`);
+  if (titleRadio) titleRadio.checked = true;
+  const positionRadio = document.querySelector(`input[name="nativePosition"][value="${value.nativePosition}"]`);
+  if (positionRadio) positionRadio.checked = true;
+  $('#customTitle').value = value.customTitle || '';
+  $('#noteTitle').value = value.noteTitle ?? DEFAULT_SETTINGS.noteTitle;
+  $('#note').value = value.note || '';
+  $('#insertBody').checked = value.insertBody !== false;
+  $('#bodyNote').value = value.bodyNote || '';
+  tailImage = value.tailImage?.dataUrl ? value.tailImage : null;
+  setImageStatus(tailImage);
+}
+
+async function loadSettings() {
+  if (!globalThis.chrome?.storage?.local) return;
+  const stored = await chrome.storage.local.get('moliSettings');
+  applySettings(stored?.moliSettings);
+}
 
 function request(action, payload = {}) {
   const requestId = `moli-${Date.now()}-${requestCounter += 1}`;
@@ -81,8 +152,23 @@ $('#tailImageInput').addEventListener('change', async event => {
     reader.readAsDataURL(file);
   });
   tailImage = { dataUrl, name: file.name, type: file.type };
-  $('#tailImageStatus').textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB`;
-  $('#tailImageStatus').classList.add('ready');
+  setImageStatus(tailImage);
+  schedulePersist();
+});
+
+$('#clearTailImage').addEventListener('click', () => {
+  tailImage = null;
+  $('#tailImageInput').value = '';
+  setImageStatus(null);
+  schedulePersist();
+});
+
+['customTitle', 'noteTitle', 'note', 'bodyNote'].forEach(id => {
+  $(`#${id}`).addEventListener('input', schedulePersist);
+});
+$('#insertBody').addEventListener('change', schedulePersist);
+document.querySelectorAll('input[name="titleMode"], input[name="nativePosition"]').forEach(input => {
+  input.addEventListener('change', schedulePersist);
 });
 
 $('#applyButton').addEventListener('click', () => run($('#applyButton'), 'APPLY_MARKDOWN', {
@@ -164,4 +250,4 @@ $('#saveButton').addEventListener('click', () => run($('#saveButton'), 'SAVE_DRA
 $('#publishButton').addEventListener('click', () => run($('#publishButton'), 'OPEN_PUBLISH', {}, '正在打开…'));
 $('#closeButton').addEventListener('click', () => request('CLOSE_PANEL'));
 
-refreshEditorStatus().catch(() => { $('#editorBadge').textContent = '连接失败'; });
+Promise.all([loadSettings(), refreshEditorStatus()]).catch(() => { $('#editorBadge').textContent = '连接失败'; });
