@@ -98,6 +98,12 @@ const { chromium } = require('playwright');
     }), { action, payload });
   }
 
+  await page.locator('.js_search_btn').evaluate(element => {
+    element.addEventListener('click', () => {
+      window.searchHrefDuringClick = element.getAttribute('href');
+    });
+  });
+
   const status = await request('STATUS');
   assert.equal(status.titleEditor, true);
   assert.equal(status.bodyEditor, true);
@@ -117,6 +123,9 @@ const { chromium } = require('playwright');
   assert.equal(await page.evaluate(() => window.newContentOpened), 1);
   assert.equal(await page.evaluate(() => window.repostOpened), 1);
   assert.equal(await page.locator('.js_search_input').inputValue(), 'https://mp.weixin.qq.com/s/from-apply');
+  assert.equal(await page.evaluate(() => window.blockedSearchJavascriptUrl), undefined);
+  assert.equal(await page.evaluate(() => window.searchHrefDuringClick), null);
+  assert.match(await page.locator('.js_search_btn').getAttribute('href'), /^javascript:/);
   assert.match(redirectedApply.warnings.join(''), /选中原文/);
   await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'none'; });
   await page.locator('.repost-menu').evaluate(element => { element.style.display = 'none'; });

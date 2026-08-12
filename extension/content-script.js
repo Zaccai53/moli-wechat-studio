@@ -158,14 +158,18 @@
       element.click();
       return true;
     }
-    const preventJavascriptNavigation = event => event.preventDefault();
-    link.addEventListener('click', preventJavascriptNavigation, { capture: false, once: true });
-    element.dispatchEvent(new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      view: element.ownerDocument.defaultView
-    }));
+    const href = link.getAttribute('href');
+    link.removeAttribute('href');
+    try {
+      element.dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: element.ownerDocument.defaultView
+      }));
+    } finally {
+      link.setAttribute('href', href);
+    }
     return true;
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "moli-wechat-studio",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "description": "微信公众号排版、转载与发布工作台",
   "scripts": {
