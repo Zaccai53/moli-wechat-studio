@@ -8,9 +8,43 @@ const { chromium } = require('playwright');
     headless: true,
     executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
   });
+
+  const homePage = await browser.newPage();
+  await homePage.goto(`file://${path.join(__dirname, 'home-fixture.html')}?t=home/index`);
+  await homePage.addInitScript(() => {
+    const values = {};
+    window.chrome = {
+      runtime: { getURL: () => 'about:blank' },
+      storage: {
+        local: {
+          async set(update) { Object.assign(values, update); window.moliStoredValues = { ...values }; },
+          async get(key) { return { [key]: values[key] }; },
+          async remove(key) { delete values[key]; window.moliStoredValues = { ...values }; }
+        }
+      }
+    };
+  });
+  await homePage.reload();
+  await homePage.addScriptTag({ path: path.join(__dirname, '../extension/lib/markdown.js') });
+  await homePage.addScriptTag({ path: path.join(__dirname, '../extension/content-script.js') });
+  await homePage.waitForSelector('.home-repost .moli-native-repost-entry');
+  assert.equal(await homePage.locator('.home-repost .moli-native-repost-entry').getAttribute('title'), '选中文章后，墨流会自动打开转载配置');
+  assert.equal(await homePage.locator('.moli-launcher').innerText(), '墨流转载');
+  await homePage.locator('.home-repost').click({ position: { x: 5, y: 5 } });
+  assert.equal(await homePage.evaluate(() => window.repostOpened), 1);
+  assert.ok(await homePage.evaluate(() => Number(window.moliStoredValues?.moliPendingRepost) > 0));
+  await homePage.locator('.share_article_dialog').evaluate(element => { element.style.display = 'none'; });
+  await homePage.locator('.moli-launcher').click();
+  assert.equal(await homePage.evaluate(() => window.repostOpened), 2);
+  assert.equal(await homePage.locator('.share_article_dialog').isVisible(), true);
+  assert.ok(await homePage.evaluate(() => Number(window.moliStoredValues?.moliPendingRepost) > 0));
+  assert.match(await homePage.locator('.moli-host-notice').innerText(), /自动打开墨流配置/);
+  await homePage.close();
+
   const page = await browser.newPage();
   await page.goto(`file://${path.join(__dirname, 'extension-fixture.html')}?share=1`);
   await page.addInitScript(() => {
+    const values = { moliPendingRepost: Date.now() };
     window.chrome = {
       runtime: {
         getURL: () => 'about:blank',
@@ -29,6 +63,13 @@ const { chromium } = require('playwright');
             </body></html>`
           };
         }
+      },
+      storage: {
+        local: {
+          async get(key) { return { [key]: values[key] }; },
+          async remove(key) { delete values[key]; window.moliStoredValues = { ...values }; },
+          async set(update) { Object.assign(values, update); window.moliStoredValues = { ...values }; }
+        }
       }
     };
   });
@@ -38,6 +79,8 @@ const { chromium } = require('playwright');
 
   const panelFrame = page.frames().find(frame => frame !== page.mainFrame());
   assert.ok(panelFrame, 'extension panel iframe should be injected');
+  await page.waitForSelector('.moli-drawer.is-open');
+  assert.equal(await page.evaluate(() => window.moliStoredValues?.moliPendingRepost), undefined);
 
   async function request(action, payload = {}) {
     return panelFrame.evaluate(({ action, payload }) => new Promise((resolve, reject) => {

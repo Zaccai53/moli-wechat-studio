@@ -90,6 +90,10 @@ function request(action, payload = {}) {
 
 window.addEventListener('message', event => {
   if (event.source !== window.parent || event.data?.source !== 'moli-host') return;
+  if (event.data.event === 'OPEN_TAB') {
+    activateTab(event.data.tab);
+    return;
+  }
   const item = pending.get(event.data.requestId);
   if (!item) return;
   clearTimeout(item.timer);
@@ -143,10 +147,15 @@ async function run(button, action, payload, loadingText) {
   }
 }
 
+function activateTab(tab) {
+  const target = tab === 'repost' ? 'repost' : 'markdown';
+  document.querySelectorAll('nav button').forEach(item => item.classList.toggle('active', item.dataset.tab === target));
+  $('#markdownTab').hidden = target !== 'markdown';
+  $('#repostTab').hidden = target !== 'repost';
+}
+
 document.querySelectorAll('nav button').forEach(button => button.addEventListener('click', () => {
-  document.querySelectorAll('nav button').forEach(item => item.classList.toggle('active', item === button));
-  $('#markdownTab').hidden = button.dataset.tab !== 'markdown';
-  $('#repostTab').hidden = button.dataset.tab !== 'repost';
+  activateTab(button.dataset.tab);
 }));
 
 $('#fileInput').addEventListener('change', async event => {

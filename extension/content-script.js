@@ -15,11 +15,22 @@
   const panel = document.createElement('iframe');
   panel.src = chrome.runtime.getURL('panel.html');
   panel.title = '墨流排版助手';
+  const notice = document.createElement('div');
+  notice.className = 'moli-host-notice';
+  notice.setAttribute('role', 'status');
   drawer.append(panel);
-  host.append(launcher, drawer);
+  host.append(launcher, notice, drawer);
   document.documentElement.append(host);
 
-  launcher.addEventListener('click', () => drawer.classList.toggle('is-open'));
+  const pageUrl = new URL(location.href);
+  const isHomePage = location.pathname === '/cgi-bin/home'
+    || pageUrl.searchParams.get('t') === 'home/index';
+
+  if (isHomePage) {
+    host.classList.add('is-home');
+    launcher.textContent = '墨流转载';
+    launcher.title = '打开公众号转载，选中文章后自动进入墨流配置';
+  }
 
   const SELECTORS = {
     titleEditor: [
@@ -65,6 +76,59 @@
     }
     return null;
   }
+
+  let noticeTimer;
+  function showHostNotice(message, error = false) {
+    clearTimeout(noticeTimer);
+    notice.textContent = message;
+    notice.classList.toggle('is-error', error);
+    notice.classList.add('is-visible');
+    noticeTimer = setTimeout(() => notice.classList.remove('is-visible'), 4200);
+  }
+
+  async function rememberRepostIntent() {
+    if (!chrome.storage?.local) return;
+    await chrome.storage.local.set({ moliPendingRepost: Date.now() });
+  }
+
+  async function consumeRepostIntent() {
+    if (!chrome.storage?.local) return false;
+    const stored = await chrome.storage.local.get('moliPendingRepost');
+    const startedAt = Number(stored?.moliPendingRepost || 0);
+    const active = startedAt > 0 && Date.now() - startedAt < 15 * 60 * 1000;
+    if (startedAt) await chrome.storage.local.remove('moliPendingRepost');
+    return active;
+  }
+
+  function openPanel(tab = '') {
+    drawer.classList.add('is-open');
+    if (!tab) return;
+    const notifyPanel = () => panel.contentWindow?.postMessage({
+      source: 'moli-host',
+      event: 'OPEN_TAB',
+      tab
+    }, '*');
+    notifyPanel();
+    panel.addEventListener('load', notifyPanel, { once: true });
+  }
+
+  launcher.addEventListener('click', async () => {
+    if (!isHomePage) {
+      drawer.classList.toggle('is-open');
+      return;
+    }
+    launcher.disabled = true;
+    try {
+      await rememberRepostIntent();
+      await openNativeRepostDialog();
+      showHostNotice('请选择要转载的文章；进入编辑页后会自动打开墨流配置');
+    } catch (error) {
+      if (chrome.storage?.local) await chrome.storage.local.remove('moliPendingRepost').catch(() => {});
+      showHostNotice(error.message || '未能打开转载入口', true);
+    } finally {
+      launcher.disabled = false;
+    }
+  });
 
   function findBodyEditor() {
     const direct = findFirst(SELECTORS.bodyEditor);
@@ -458,6 +522,19 @@
     return visibleActionByText(['新建内容', '新建图文', '更多']);
   }
 
+  function enhanceHomeRepostEntry() {
+    if (!isHomePage) return;
+    const entry = nativeRepostEntry();
+    if (!entry || entry.dataset.moliRepostReady === 'true') return;
+    const action = entry.closest('button, a, [role="button"], [onclick]') || entry.parentElement || entry;
+    entry.dataset.moliRepostReady = 'true';
+    entry.classList.add('moli-native-repost-entry');
+    entry.title = '选中文章后，墨流会自动打开转载配置';
+    action.addEventListener('click', () => {
+      rememberRepostIntent().catch(() => {});
+    }, { capture: true });
+  }
+
   async function revealNativeRepostEntry() {
     let entry = nativeRepostEntry();
     if (entry) return entry;
@@ -664,4 +741,14 @@
       panel.contentWindow.postMessage({ source: 'moli-host', requestId, ok: false, error: error.message || '操作失败' }, '*');
     }
   });
+
+  if (isHomePage) {
+    enhanceHomeRepostEntry();
+    const homeObserver = new MutationObserver(enhanceHomeRepostEntry);
+    homeObserver.observe(document.body, { childList: true, subtree: true });
+  } else if (new URL(location.href).searchParams.get('share') === '1') {
+    consumeRepostIntent().then(shouldOpen => {
+      if (shouldOpen) openPanel('repost');
+    }).catch(() => {});
+  }
 })();

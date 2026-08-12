@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<body>
+  <main>
+    <section class="new-creation">
+      <h2>新的创作</h2>
+      <button class="home-repost" type="button" onclick="document.querySelector('.share_article_dialog').style.display='block';window.repostOpened=(window.repostOpened||0)+1">
+        <span>转载</span>
+      </button>
+    </section>
+    <div class="dialog_wrp share_article_dialog" style="display:none">
+      <input class="js_search_input" type="text">
+      <button class="js_search_btn" type="button">搜索</button>
+    </div>
+  </main>
+</body>
+</html>
