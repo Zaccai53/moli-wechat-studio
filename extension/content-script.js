@@ -150,6 +150,25 @@
       && element.getClientRects().length > 0;
   }
 
+  function clickWechatAction(element) {
+    if (!element) return false;
+    const link = element.closest?.('a[href]');
+    const javascriptLink = link && /^\s*javascript:/i.test(link.getAttribute('href') || '');
+    if (!javascriptLink) {
+      element.click();
+      return true;
+    }
+    const preventJavascriptNavigation = event => event.preventDefault();
+    link.addEventListener('click', preventJavascriptNavigation, { capture: false, once: true });
+    element.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: element.ownerDocument.defaultView
+    }));
+    return true;
+  }
+
   function selectContents(element, position = 'replace') {
     const selection = element.ownerDocument.getSelection();
     const range = element.ownerDocument.createRange();
@@ -540,7 +559,7 @@
     if (entry) return entry;
     const menuTrigger = newContentEntry();
     if (!menuTrigger) return null;
-    menuTrigger.click();
+    clickWechatAction(menuTrigger);
     const startedAt = Date.now();
     while (Date.now() - startedAt < 3000) {
       entry = nativeRepostEntry();
@@ -556,7 +575,7 @@
     const entry = await revealNativeRepostEntry();
     if (!entry) throw new Error('未找到公众号页面中的“转载”按钮，请确认当前是图文编辑页');
     drawer.classList.remove('is-open');
-    entry.click();
+    clickWechatAction(entry);
     const dialog = await waitForVisible(SELECTORS.nativeRepostDialog);
     if (!dialog) throw new Error('已点击“转载”，但公众号转载窗口未打开，请检查页面提示');
     return dialog;
@@ -569,7 +588,7 @@
     if (!input) throw new Error('转载窗口已打开，但未找到原文搜索框');
     setNativeValue(input, url);
     const searchButton = findFirst(SELECTORS.nativeRepostSearchButton);
-    if (searchButton) searchButton.click();
+    if (searchButton) clickWechatAction(searchButton);
     else {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
       input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
@@ -705,7 +724,7 @@
   function clickNative(selectorList, missingMessage) {
     const button = findFirst(selectorList);
     if (!button) throw new Error(missingMessage);
-    button.click();
+    clickWechatAction(button);
     return { message: '已交给公众号处理，请留意页面提示' };
   }
 
