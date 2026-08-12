@@ -93,6 +93,27 @@ const { chromium } = require('playwright');
   const nativeText = await page.locator('#ueditor_0 .ProseMirror').innerText();
   assert.ok(nativeText.indexOf('以下文章来源于') < nativeText.indexOf('补充说明'));
 
+  const bodyAfterFirstSupplement = await page.locator('#ueditor_0 .ProseMirror').innerHTML();
+  const duplicateResult = await request('APPLY_NATIVE_REPOST', {
+    noteTitle: '荐语',
+    note: '值得一读',
+    insertBody: true,
+    bodyNote: '补充说明',
+    position: 'bottom',
+    titleMode: 'prefix',
+    tailImage: {
+      name: 'tail.png',
+      type: 'image/png',
+      dataUrl: 'data:image/png;base64,iVBORw0KGgo='
+    }
+  });
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), bodyAfterFirstSupplement);
+  assert.equal(await page.locator('#title').inputValue(), '活动推荐 | 注入测试');
+  assert.match(duplicateResult.warnings.join(''), /标题增补已存在/);
+  assert.match(duplicateResult.warnings.join(''), /相同来源署名/);
+  assert.match(duplicateResult.warnings.join(''), /相同正文增补/);
+  assert.match(duplicateResult.warnings.join(''), /相同尾图/);
+
   await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'block'; });
   await request('SEARCH_NATIVE_REPOST', { url: 'https://mp.weixin.qq.com/s/example' });
   assert.equal(await page.locator('.js_search_input').inputValue(), 'https://mp.weixin.qq.com/s/example');
