@@ -97,14 +97,33 @@ window.addEventListener('message', event => {
   event.data.ok ? item.resolve(event.data.result) : item.reject(new Error(event.data.error));
 });
 
+const STATUS_DURATION = 4200;
+const STATUS_LEAVE_DURATION = 1500;
 let statusTimer;
-function showStatus(message, error = false) {
+let statusHovered = false;
+
+function scheduleStatusHide(duration = STATUS_DURATION) {
   clearTimeout(statusTimer);
+  if (statusHovered) return;
+  statusTimer = setTimeout(() => { $('#status').className = ''; }, duration);
+}
+
+function showStatus(message, error = false) {
   const node = $('#status');
   node.textContent = message;
   node.className = `show${error ? ' error' : ''}`;
-  statusTimer = setTimeout(() => { node.className = ''; }, 4200);
+  scheduleStatusHide();
 }
+
+$('#status').addEventListener('mouseenter', () => {
+  statusHovered = true;
+  clearTimeout(statusTimer);
+});
+
+$('#status').addEventListener('mouseleave', () => {
+  statusHovered = false;
+  if ($('#status').classList.contains('show')) scheduleStatusHide(STATUS_LEAVE_DURATION);
+});
 
 async function run(button, action, payload, loadingText) {
   const original = button.textContent;
@@ -201,7 +220,7 @@ async function refreshEditorStatus() {
   } else if (status.bodyEditor && status.titleEditor) {
     badge.textContent = '编辑器已连接';
     badge.classList.add('ready');
-    capability.textContent = '请先点击公众号页面中的“转载”，再搜索原文。';
+    capability.textContent = '粘贴原文链接后，墨流会自动打开公众号转载窗口并搜索。';
   } else {
     badge.textContent = '编辑器未就绪';
   }
@@ -226,6 +245,7 @@ $('#searchNativeButton').addEventListener('click', async () => {
 $('#applyNativeButton').addEventListener('click', async () => {
   const result = await run($('#applyNativeButton'), 'APPLY_NATIVE_REPOST', {
     ...supplements(),
+    url: $('#repostUrl').value,
     noteTitle: $('#noteTitle').value,
     note: $('#note').value,
     insertBody: $('#insertBody').checked,
@@ -233,7 +253,8 @@ $('#applyNativeButton').addEventListener('click', async () => {
     bodyNote: $('#bodyNote').value,
     position: document.querySelector('input[name="nativePosition"]:checked').value
   }, '正在应用…');
-  if (result) refreshEditorStatus();
+  if (result?.pendingSelection) setTimeout(() => request('CLOSE_PANEL'), 650);
+  else if (result) refreshEditorStatus();
 });
 
 $('#importButton').addEventListener('click', () => run($('#importButton'), 'IMPORT_REPOST', {

@@ -18,6 +18,10 @@
     <span class="js_reprint_biz_nickname">来源公众号</span>
     <span class="js_reprint_author">作者甲</span>
   </div>
+  <div onclick="document.querySelector('.repost-menu').style.display='block';window.newContentOpened=(window.newContentOpened||0)+1"><span>新建内容</span></div>
+  <div class="repost-menu" style="display:none">
+    <div onclick="document.querySelector('.share_article_dialog').style.display='block';window.repostOpened=(window.repostOpened||0)+1"><span>转载文章</span></div>
+  </div>
   <div class="dialog_wrp share_article_dialog" style="display:none">
     <input class="js_search_input" type="text">
     <button class="js_search_btn" type="button" onclick="window.searched=(window.searched||0)+1">搜索</button>

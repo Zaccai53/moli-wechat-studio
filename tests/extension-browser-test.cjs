@@ -60,6 +60,23 @@ const { chromium } = require('playwright');
   assert.equal(status.nativeRepostReady, true);
   assert.equal(status.nativeRepostCanModify, true);
 
+  await page.locator('#js_reprint_source').evaluate(element => { element.style.display = 'none'; });
+  const redirectedApply = await request('APPLY_NATIVE_REPOST', {
+    url: 'https://mp.weixin.qq.com/s/from-apply',
+    noteTitle: '荐语',
+    note: '等待选择',
+    insertBody: true,
+    titleMode: 'prefix'
+  });
+  assert.equal(redirectedApply.pendingSelection, true);
+  assert.equal(await page.evaluate(() => window.newContentOpened), 1);
+  assert.equal(await page.evaluate(() => window.repostOpened), 1);
+  assert.equal(await page.locator('.js_search_input').inputValue(), 'https://mp.weixin.qq.com/s/from-apply');
+  assert.match(redirectedApply.warnings.join(''), /选中原文/);
+  await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'none'; });
+  await page.locator('.repost-menu').evaluate(element => { element.style.display = 'none'; });
+  await page.locator('#js_reprint_source').evaluate(element => { element.style.display = 'block'; });
+
   await request('APPLY_MARKDOWN', {
     markdown: '# 注入测试\n\n## 小标题\n\n正文带有 **重点**。',
     author: '墨流',
@@ -114,10 +131,18 @@ const { chromium } = require('playwright');
   assert.match(duplicateResult.warnings.join(''), /相同正文增补/);
   assert.match(duplicateResult.warnings.join(''), /相同尾图/);
 
-  await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'block'; });
   await request('SEARCH_NATIVE_REPOST', { url: 'https://mp.weixin.qq.com/s/example' });
+  assert.equal(await page.evaluate(() => window.newContentOpened), 2);
+  assert.equal(await page.evaluate(() => window.repostOpened), 2);
+  assert.equal(await page.locator('.share_article_dialog').isVisible(), true);
   assert.equal(await page.locator('.js_search_input').inputValue(), 'https://mp.weixin.qq.com/s/example');
-  assert.equal(await page.evaluate(() => window.searched), 1);
+  assert.equal(await page.evaluate(() => window.searched), 2);
+
+  await request('SEARCH_NATIVE_REPOST', { url: 'https://mp.weixin.qq.com/s/second-example' });
+  assert.equal(await page.evaluate(() => window.newContentOpened), 2);
+  assert.equal(await page.evaluate(() => window.repostOpened), 2);
+  assert.equal(await page.locator('.js_search_input').inputValue(), 'https://mp.weixin.qq.com/s/second-example');
+  assert.equal(await page.evaluate(() => window.searched), 3);
 
   await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'none'; });
   await page.locator('#js_reprint_article_tips').evaluate(element => { element.style.display = 'block'; });
@@ -136,7 +161,7 @@ const { chromium } = require('playwright');
   assert.match(lockedResult.warnings.join(''), /未授予正文修改权限/);
   await page.locator('#js_reprint_article_tips').evaluate(element => { element.style.display = 'none'; });
 
-  await request('IMPORT_REPOST', {
+  const importPayload = {
     url: 'https://mp.weixin.qq.com/s/public-example',
     permissionConfirmed: true,
     titleMode: 'custom',
@@ -149,11 +174,35 @@ const { chromium } = require('playwright');
       type: 'image/png',
       dataUrl: 'data:image/png;base64,iVBORw0KGgo='
     }
-  });
+  };
+  const [firstImport, secondImport] = await Promise.all([
+    request('IMPORT_REPOST', importPayload),
+    request('IMPORT_REPOST', importPayload)
+  ]);
   assert.equal(await page.locator('#title').inputValue(), '自定义活动标题');
   assert.match(await page.locator('#ueditor_0 .ProseMirror').innerText(), /以下文章来源于来源公众号，作者作者乙/);
   assert.match(await page.locator('#ueditor_0 .ProseMirror').innerText(), /公开正文/);
   assert.match(await page.locator('#ueditor_0 .ProseMirror').innerText(), /文末补充/);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText('公开正文', { exact: true }).count(), 1);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror img').count(), 1);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror > :last-child img').count(), 1);
+  assert.match(secondImport.warnings.join(''), /标题已是目标内容/);
+  assert.match(secondImport.warnings.join(''), /图文正文已是目标内容/);
+  assert.match(secondImport.warnings.join(''), /移动到文章结尾/);
+
+  await page.locator('#title').fill('错误标题');
+  await page.locator('#ueditor_0 .ProseMirror').evaluate(element => {
+    const imageBlock = element.lastElementChild;
+    element.innerHTML = '<p>错误正文</p>';
+    element.prepend(imageBlock);
+    delete element.dataset.moliImport;
+  });
+  await request('IMPORT_REPOST', importPayload);
+  assert.equal(await page.locator('#title').inputValue(), '自定义活动标题');
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText('公开正文', { exact: true }).count(), 1);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText('错误正文', { exact: true }).count(), 0);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror img').count(), 1);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror > :last-child img').count(), 1);
 
   await request('SAVE_DRAFT');
   await request('OPEN_PUBLISH');

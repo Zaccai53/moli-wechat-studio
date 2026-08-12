@@ -54,6 +54,16 @@ let browser;
   assert.equal(await page.locator('input[name="nativePosition"][value="bottom"]').isChecked(), true);
   await page.locator('#tailImageStatus').waitFor({ state: 'visible' });
   assert.match(await page.locator('#tailImageStatus').textContent(), /default-tail\.png/);
+
+  await page.evaluate(() => showStatus('悬停测试'));
+  await page.locator('#status').hover();
+  await page.waitForTimeout(4400);
+  assert.equal(await page.locator('#status').isVisible(), true);
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(1200);
+  assert.equal(await page.locator('#status').isVisible(), true);
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('#status').isVisible(), false);
   await browser.close();
   console.log('panel settings integration: passed');
 })().catch(error => {

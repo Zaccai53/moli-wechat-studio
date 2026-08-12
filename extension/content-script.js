@@ -40,6 +40,18 @@
     nativeRepostSource: ['#js_reprint_source'],
     nativeRepostTip: ['#js_reprint_article_tips'],
     nativeRepostDialog: ['.dialog_wrp.share_article_dialog'],
+    nativeRepostEntry: [
+      '.js_reprint',
+      '.js_reprint_btn',
+      '.js_reprint_entry',
+      '[data-action="reprint"]',
+      '[data-action="repost"]'
+    ],
+    newContentEntry: [
+      '.js_add_appmsg',
+      '.js_add_content',
+      '[data-action="add-content"]'
+    ],
     nativeRepostSearch: ['.share_article_dialog .js_search_input'],
     nativeRepostSearchButton: ['.share_article_dialog .js_search_btn'],
     save: ['#js_submit button', '#js_submit'],
@@ -70,7 +82,8 @@
   function isVisible(element) {
     if (!element || !element.isConnected) return false;
     const style = element.ownerDocument.defaultView.getComputedStyle(element);
-    return style.display !== 'none' && style.visibility !== 'hidden' && !element.hidden;
+    return style.display !== 'none' && style.visibility !== 'hidden' && !element.hidden
+      && element.getClientRects().length > 0;
   }
 
   function selectContents(element, position = 'replace') {
@@ -135,7 +148,7 @@
     const title = value.trim().slice(0, 64);
     const editor = findFirst(SELECTORS.titleEditor);
     if (editor) pasteIntoEditable(editor, '', title);
-    setNativeValue(findFirst(SELECTORS.hiddenTitle), title);
+    else setNativeValue(findFirst(SELECTORS.hiddenTitle), title);
   }
 
   function currentTitle() {
@@ -187,15 +200,48 @@
     return (hash >>> 0).toString(36);
   }
 
+  function contentFingerprint(value) {
+    const html = String(value || '');
+    let hash = 2166136261;
+    for (let index = 0; index < html.length; index += 1) {
+      hash ^= html.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function matchingImage(element, image) {
+    if (!element || !image?.dataUrl) return null;
+    const fingerprint = imageFingerprint(image);
+    return [...element.querySelectorAll('img')].find(node => {
+      const source = node.getAttribute('src') || node.getAttribute('data-src') || '';
+      return source === image.dataUrl || node.dataset.moliImage === fingerprint;
+    }) || null;
+  }
+
   function editorContainsImage(element, image) {
     if (!element || !image?.dataUrl) return false;
     const fingerprint = imageFingerprint(image);
     const insertedImages = String(element.dataset.moliImages || '').split(',');
     if (insertedImages.includes(fingerprint)) return true;
-    return [...element.querySelectorAll('img')].some(node => {
-      const source = node.getAttribute('src') || node.getAttribute('data-src') || '';
-      return source === image.dataUrl || node.dataset.moliImage === fingerprint;
-    });
+    return Boolean(matchingImage(element, image));
+  }
+
+  function tailImageBlock(imageNode) {
+    if (!imageNode) return null;
+    return imageNode.closest('p, figure') || imageNode;
+  }
+
+  function moveTailImageToEnd(element, image) {
+    const imageNode = matchingImage(element, image);
+    const block = tailImageBlock(imageNode);
+    if (!block) return false;
+    if (block !== element.lastElementChild) element.append(block);
+    element.dispatchEvent(new InputEvent('input', {
+      bubbles: true, composed: true, inputType: 'insertFromPaste', data: null
+    }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
   }
 
   function applyMarkdown(payload) {
@@ -294,7 +340,11 @@
   function pasteImageIntoEditable(element, image) {
     if (!image?.dataUrl) return { inserted: false, uploadedByWechat: false };
     if (!element) throw new Error('未找到可插入尾图的正文编辑器');
-    if (editorContainsImage(element, image)) return { inserted: false, uploadedByWechat: false, duplicate: true };
+    if (editorContainsImage(element, image)) {
+      moveTailImageToEnd(element, image);
+      return { inserted: false, uploadedByWechat: false, duplicate: true, movedToEnd: true };
+    }
+    const imagesBeforePaste = new Set(element.querySelectorAll('img'));
     element.focus();
     selectContents(element, 'bottom');
     let handledByWechat = false;
@@ -319,8 +369,12 @@
       }));
     }
     const fingerprints = new Set(String(element.dataset.moliImages || '').split(',').filter(Boolean));
-    fingerprints.add(imageFingerprint(image));
+    const fingerprint = imageFingerprint(image);
+    fingerprints.add(fingerprint);
     element.dataset.moliImages = [...fingerprints].join(',');
+    const insertedImage = [...element.querySelectorAll('img')].find(node => !imagesBeforePaste.has(node));
+    if (insertedImage) insertedImage.dataset.moliImage = fingerprint;
+    moveTailImageToEnd(element, image);
     element.dispatchEvent(new Event('change', { bubbles: true }));
     return { inserted: true, uploadedByWechat: handledByWechat };
   }
@@ -360,12 +414,82 @@
     return url.toString();
   }
 
-  function searchNativeRepost(payload) {
-    const url = validateWechatUrl(payload.url);
-    const input = findFirst(SELECTORS.nativeRepostSearch);
-    if (!input || !isVisible(findFirst(SELECTORS.nativeRepostDialog))) {
-      throw new Error('请先在公众号后台点击“转载”，进入转载文章窗口');
+  function waitForVisible(selectorList, timeout = 3000) {
+    const startedAt = Date.now();
+    return new Promise(resolve => {
+      const check = () => {
+        const element = findFirst(selectorList);
+        if (element && isVisible(element)) return resolve(element);
+        if (Date.now() - startedAt >= timeout) return resolve(null);
+        setTimeout(check, 80);
+      };
+      check();
+    });
+  }
+
+  function visibleActionByText(labels) {
+    const expected = new Set(labels.map(normalizedText));
+    const candidates = document.querySelectorAll('body *');
+    const matches = [...candidates].filter(element => {
+      if (!isVisible(element) || host.contains(element)) return false;
+      const values = [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title')]
+        .map(normalizedText).filter(Boolean);
+      return values.some(value => expected.has(value));
+    });
+    // Prefer the smallest matching leaf. WeChat often binds the click listener on
+    // a parent div while the visible label lives in a span; clicking the span lets
+    // the native event bubble to that parent without depending on private classes.
+    return matches.sort((left, right) => {
+      const leftChildren = left.querySelectorAll('*').length;
+      const rightChildren = right.querySelectorAll('*').length;
+      return leftChildren - rightChildren;
+    })[0] || null;
+  }
+
+  function nativeRepostEntry() {
+    const known = findFirst(SELECTORS.nativeRepostEntry);
+    if (known && isVisible(known) && !host.contains(known)) return known;
+    return visibleActionByText(['转载', '转载文章']);
+  }
+
+  function newContentEntry() {
+    const known = findFirst(SELECTORS.newContentEntry);
+    if (known && isVisible(known) && !host.contains(known)) return known;
+    return visibleActionByText(['新建内容', '新建图文', '更多']);
+  }
+
+  async function revealNativeRepostEntry() {
+    let entry = nativeRepostEntry();
+    if (entry) return entry;
+    const menuTrigger = newContentEntry();
+    if (!menuTrigger) return null;
+    menuTrigger.click();
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 3000) {
+      entry = nativeRepostEntry();
+      if (entry) return entry;
+      await new Promise(resolve => setTimeout(resolve, 80));
     }
+    return null;
+  }
+
+  async function openNativeRepostDialog() {
+    const visibleDialog = findFirst(SELECTORS.nativeRepostDialog);
+    if (isVisible(visibleDialog)) return visibleDialog;
+    const entry = await revealNativeRepostEntry();
+    if (!entry) throw new Error('未找到公众号页面中的“转载”按钮，请确认当前是图文编辑页');
+    drawer.classList.remove('is-open');
+    entry.click();
+    const dialog = await waitForVisible(SELECTORS.nativeRepostDialog);
+    if (!dialog) throw new Error('已点击“转载”，但公众号转载窗口未打开，请检查页面提示');
+    return dialog;
+  }
+
+  async function searchNativeRepost(payload) {
+    const url = validateWechatUrl(payload.url);
+    await openNativeRepostDialog();
+    const input = await waitForVisible(SELECTORS.nativeRepostSearch);
+    if (!input) throw new Error('转载窗口已打开，但未找到原文搜索框');
     setNativeValue(input, url);
     const searchButton = findFirst(SELECTORS.nativeRepostSearchButton);
     if (searchButton) searchButton.click();
@@ -373,7 +497,7 @@
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
       input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
     }
-    return { message: '已在公众号中搜索原文，请选择文章并点击“确定”' };
+    return { message: '已自动打开转载窗口并搜索原文，请选择文章并点击“确定”' };
   }
 
   async function importRepost(payload) {
@@ -385,13 +509,34 @@
     const note = editorNote(payload.bodyNote || payload.note, payload.bodyNoteTitle || '编者按');
     let content = attribution + article.content;
     if (note) content = payload.position === 'bottom' ? content + note : attribution + note + article.content;
-    setArticleMetadata({
-      ...article,
-      title: transformedTitle(article.title, payload)
-    });
-    pasteIntoEditable(findBodyEditor(), content, plainTextFromHtml(content));
-    const imageResult = pasteImageIntoEditable(findBodyEditor(), payload.tailImage);
     const warnings = imageWarnings(content);
+    const desiredTitle = transformedTitle(article.title, payload);
+    if (normalizedText(currentTitle()) === normalizedText(desiredTitle)) {
+      warnings.push('标题已是目标内容，已跳过重复写入。');
+    } else {
+      setArticleMetadata({ ...article, title: desiredTitle });
+    }
+    const bodyEditor = findBodyEditor();
+    const desiredFingerprint = contentFingerprint(content);
+    const existingTailBlock = tailImageBlock(matchingImage(bodyEditor, payload.tailImage));
+    const desiredText = plainTextFromHtml(content);
+    const sameContent = bodyEditor.dataset.moliImport === desiredFingerprint
+      || normalizedText(bodyEditor.textContent) === normalizedText(desiredText);
+    if (sameContent) {
+      warnings.push('图文正文已是目标内容，已跳过重复写入。');
+    } else {
+      if (existingTailBlock) existingTailBlock.remove();
+      pasteIntoEditable(bodyEditor, content, desiredText);
+      bodyEditor.dataset.moliImport = desiredFingerprint;
+      if (existingTailBlock) bodyEditor.append(existingTailBlock);
+    }
+    if (!sameContent && !existingTailBlock && payload.tailImage) {
+      const fingerprints = new Set(String(bodyEditor.dataset.moliImages || '').split(',').filter(Boolean));
+      fingerprints.delete(imageFingerprint(payload.tailImage));
+      bodyEditor.dataset.moliImages = [...fingerprints].join(',');
+    }
+    const imageResult = pasteImageIntoEditable(bodyEditor, payload.tailImage);
+    if (imageResult.duplicate) warnings.push('全文中已存在相同尾图，已保留并移动到文章结尾。');
     if (imageResult.inserted && !imageResult.uploadedByWechat) warnings.push('尾图已插入，保存前请确认公众号完成图片转存。');
     if (!article.isOriginal) warnings.push('未检测到原创标识，已按普通新文章导入。');
     return {
@@ -400,9 +545,16 @@
     };
   }
 
-  function applyNativeRepost(payload) {
+  async function applyNativeRepost(payload) {
     const repost = nativeRepostState();
-    if (!repost.ready) throw new Error('请先在公众号转载窗口选中原文并点击“确定”');
+    if (!repost.ready) {
+      const searchResult = await searchNativeRepost(payload);
+      return {
+        ...searchResult,
+        pendingSelection: true,
+        warnings: ['请在公众号转载窗口选中原文并点击“确定”，然后再次点击“应用到原生转载”。']
+      };
+    }
     const titleField = findFirst(SELECTORS.nativeRepostTitle);
     const contentField = findFirst(SELECTORS.nativeRepostContent);
     if (!titleField || !contentField) {
@@ -485,7 +637,7 @@
       case 'STATUS': return editorStatus();
       case 'APPLY_MARKDOWN': return applyMarkdown(payload);
       case 'SEARCH_NATIVE_REPOST': return searchNativeRepost(payload);
-      case 'IMPORT_REPOST': return importRepost(payload);
+      case 'IMPORT_REPOST': return queueImportRepost(payload);
       case 'APPLY_NATIVE_REPOST': return applyNativeRepost(payload);
       case 'ENHANCE_NATIVE_REPOST': return applyNativeRepost(payload);
       case 'SAVE_DRAFT': return clickNative(SELECTORS.save, '未找到“保存为草稿”按钮');
@@ -493,6 +645,13 @@
       case 'CLOSE_PANEL': drawer.classList.remove('is-open'); return { message: 'closed' };
       default: throw new Error(`未知操作：${action}`);
     }
+  }
+
+  let importQueue = Promise.resolve();
+  function queueImportRepost(payload) {
+    const current = importQueue.then(() => importRepost(payload));
+    importQueue = current.catch(() => {});
+    return current;
   }
 
   window.addEventListener('message', async event => {
