@@ -126,10 +126,19 @@ const { chromium } = require('playwright');
   assert.equal(await page.evaluate(() => window.blockedSearchJavascriptUrl), undefined);
   assert.equal(await page.evaluate(() => window.searchHrefDuringClick), null);
   assert.match(await page.locator('.js_search_btn').getAttribute('href'), /^javascript:/);
-  assert.match(redirectedApply.warnings.join(''), /选中原文/);
+  assert.match(redirectedApply.warnings.join(''), /自动完成增补/);
   await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'none'; });
   await page.locator('.repost-menu').evaluate(element => { element.style.display = 'none'; });
+  await page.locator('#ueditor_0 .ProseMirror').evaluate(element => {
+    element.innerHTML = '<p class="native-reprint-source">文章来源于来源公众号，作者作者甲</p><section><b>来源公众号</b><span>公众号介绍</span></section><p>原生转载正文</p>';
+  });
   await page.locator('#js_reprint_source').evaluate(element => { element.style.display = 'block'; });
+  await page.waitForFunction(() => document.querySelector('.js_reprint_recommend_content')?.textContent === '等待选择');
+  assert.equal(await page.locator('.js_reprint_recommend_title').inputValue(), '荐语');
+  assert.equal(await page.locator('#title').inputValue(), '活动推荐 | 原始标题');
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText(/以下文章来源于/).count(), 0);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText('原生转载正文', { exact: true }).count(), 1);
+  assert.equal(await page.evaluate(() => window.moliStoredValues?.moliPendingNativeApply), undefined);
 
   await request('APPLY_MARKDOWN', {
     markdown: '# 注入测试\n\n## 小标题\n\n正文带有 **重点**。',
@@ -181,9 +190,24 @@ const { chromium } = require('playwright');
   assert.equal(await page.locator('#ueditor_0 .ProseMirror').innerHTML(), bodyAfterFirstSupplement);
   assert.equal(await page.locator('#title').inputValue(), '活动推荐 | 注入测试');
   assert.match(duplicateResult.warnings.join(''), /标题增补已存在/);
-  assert.match(duplicateResult.warnings.join(''), /相同来源署名/);
+  assert.match(duplicateResult.warnings.join(''), /相同来源署名|原生来源介绍/);
   assert.match(duplicateResult.warnings.join(''), /相同正文增补/);
   assert.match(duplicateResult.warnings.join(''), /相同尾图/);
+
+  await page.locator('#ueditor_0 .ProseMirror').evaluate(element => {
+    element.innerHTML = '<p class="native-reprint-source">文章来源于来源公众号，作者作者甲</p><p style="margin:18px 0 24px;padding:12px 15px;color:#52616d;background:#f2f6f7;border-radius:4px;">以下文章来源于<strong>来源公众号</strong>，作者<strong>作者甲</strong></p><section>补充说明</section><p>原生转载正文</p>';
+  });
+  const nativeAttributionResult = await request('APPLY_NATIVE_REPOST', {
+    noteTitle: '荐语',
+    note: '值得一读',
+    insertBody: true,
+    bodyNote: '补充说明',
+    position: 'top',
+    titleMode: 'prefix'
+  });
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText(/以下文章来源于/).count(), 0);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText(/文章来源于来源公众号/).count(), 1);
+  assert.match(nativeAttributionResult.warnings.join(''), /移除.*重复/);
 
   await request('SEARCH_NATIVE_REPOST', { url: 'https://mp.weixin.qq.com/s/example' });
   assert.equal(await page.evaluate(() => window.newContentOpened), 2);

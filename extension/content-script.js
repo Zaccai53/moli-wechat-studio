@@ -100,6 +100,50 @@
     return active;
   }
 
+  const PENDING_NATIVE_APPLY_KEY = 'moliPendingNativeApply';
+  const PENDING_NATIVE_APPLY_TTL = 15 * 60 * 1000;
+  let pendingNativeApplyMemory = null;
+  let pendingNativeApplyRunning = false;
+
+  function activePendingNativeApply(record) {
+    const startedAt = Number(record?.startedAt || 0);
+    return startedAt > 0 && Date.now() - startedAt < PENDING_NATIVE_APPLY_TTL
+      ? record
+      : null;
+  }
+
+  async function rememberPendingNativeApply(payload) {
+    const record = { startedAt: Date.now(), payload };
+    pendingNativeApplyMemory = record;
+    if (!chrome.storage?.local) return;
+    try {
+      await chrome.storage.local.set({ [PENDING_NATIVE_APPLY_KEY]: record });
+    } catch {
+      // Keep one-click continuation working in the current page when a large
+      // tail image exceeds Chrome's storage quota. A navigation fallback still
+      // preserves all text settings and reports that the image was omitted.
+      const fallback = {
+        startedAt: record.startedAt,
+        payload: { ...payload, tailImage: null },
+        tailImageOmitted: Boolean(payload.tailImage)
+      };
+      await chrome.storage.local.set({ [PENDING_NATIVE_APPLY_KEY]: fallback }).catch(() => {});
+    }
+  }
+
+  async function pendingNativeApply() {
+    const memoryRecord = activePendingNativeApply(pendingNativeApplyMemory);
+    if (memoryRecord) return memoryRecord;
+    if (!chrome.storage?.local) return null;
+    const stored = await chrome.storage.local.get(PENDING_NATIVE_APPLY_KEY);
+    return activePendingNativeApply(stored?.[PENDING_NATIVE_APPLY_KEY]);
+  }
+
+  async function clearPendingNativeApply() {
+    pendingNativeApplyMemory = null;
+    if (chrome.storage?.local) await chrome.storage.local.remove(PENDING_NATIVE_APPLY_KEY).catch(() => {});
+  }
+
   function openPanel(tab = '') {
     drawer.classList.add('is-open');
     if (!tab) return;
@@ -411,7 +455,47 @@
     if (!sourceName && !authorName) return '';
     const source = MoliMarkdown.escapeHtml(sourceName || '原公众号');
     const writer = MoliMarkdown.escapeHtml(authorName || '原作者');
-    return `<p style="margin:18px 0 24px;padding:12px 15px;color:#52616d;background:#f2f6f7;border-radius:4px;font-family:PingFang SC,Microsoft YaHei,sans-serif;font-size:14px;line-height:1.8;">以下文章来源于<strong style="color:#2f7780;font-weight:700;">${source}</strong>，作者<strong style="color:#2f7780;font-weight:700;">${writer}</strong></p>`;
+    return `<p data-moli-attribution="true" style="margin:18px 0 24px;padding:12px 15px;color:#52616d;background:#f2f6f7;border-radius:4px;font-family:PingFang SC,Microsoft YaHei,sans-serif;font-size:14px;line-height:1.8;">以下文章来源于<strong style="color:#2f7780;font-weight:700;">${source}</strong>，作者<strong style="color:#2f7780;font-weight:700;">${writer}</strong></p>`;
+  }
+
+  function isMoliAttributionBlock(element, expectedText) {
+    if (!element || normalizedText(element.textContent) !== normalizedText(expectedText)) return false;
+    const style = normalizedText(element.getAttribute('style'));
+    const background = normalizedText(element.style.backgroundColor);
+    return element.dataset.moliAttribution === 'true'
+      || style.includes('background:#f2f6f7')
+      || background === 'rgb(242,246,247)';
+  }
+
+  function platformAttributionPresent(bodyEditor, metadata, attributionText) {
+    const publisher = normalizedText(metadata.publisher);
+    if (!bodyEditor || !publisher) return false;
+    const author = normalizedText(metadata.author);
+    const matchesPlatformText = element => {
+      if (isMoliAttributionBlock(element, attributionText)) return false;
+      const text = normalizedText(element.textContent);
+      const hasPublisher = text.includes(`文章来源于${publisher}`)
+        || text.includes(`来源于${publisher}`);
+      const hasAuthor = !author || text.includes(`作者${author}`);
+      return hasPublisher && hasAuthor;
+    };
+    const blocks = bodyEditor.querySelectorAll('p, section, [data-reprint-source], [class*="reprint"]');
+    if ([...blocks].some(matchesPlatformText)) return true;
+    const moliBlocks = [...bodyEditor.querySelectorAll('p, section')]
+      .filter(element => isMoliAttributionBlock(element, attributionText));
+    return moliBlocks.length === 0 && matchesPlatformText(bodyEditor);
+  }
+
+  function removeDuplicateMoliAttribution(bodyEditor, attributionText) {
+    const blocks = [...bodyEditor.querySelectorAll('p, section')]
+      .filter(element => isMoliAttributionBlock(element, attributionText));
+    if (!blocks.length) return false;
+    blocks.forEach(element => element.remove());
+    bodyEditor.dispatchEvent(new InputEvent('input', {
+      bubbles: true, composed: true, inputType: 'deleteContent', data: null
+    }));
+    bodyEditor.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
   }
 
   function dataUrlToFile(image) {
@@ -645,16 +729,9 @@
     };
   }
 
-  async function applyNativeRepost(payload) {
+  async function applyNativeRepostReady(payload, options = {}) {
     const repost = nativeRepostState();
-    if (!repost.ready) {
-      const searchResult = await searchNativeRepost(payload);
-      return {
-        ...searchResult,
-        pendingSelection: true,
-        warnings: ['请在公众号转载窗口选中原文并点击“确定”，然后再次点击“应用到原生转载”。']
-      };
-    }
+    if (!repost.ready) throw new Error('转载原文仍在载入，请稍后重试');
     const titleField = findFirst(SELECTORS.nativeRepostTitle);
     const contentField = findFirst(SELECTORS.nativeRepostContent);
     if (!titleField || !contentField) {
@@ -677,7 +754,12 @@
         const note = editorNote(payload.bodyNote, payload.bodyNoteTitle || '编者按');
         const attributionText = plainTextFromHtml(attribution);
         const noteText = plainTextFromHtml(note);
-        const hasAttribution = attribution && editorContainsText(bodyEditor, attributionText);
+        const hasPlatformAttribution = attribution
+          && platformAttributionPresent(bodyEditor, metadata, attributionText);
+        const removedDuplicateAttribution = hasPlatformAttribution
+          && removeDuplicateMoliAttribution(bodyEditor, attributionText);
+        const hasAttribution = hasPlatformAttribution
+          || (attribution && editorContainsText(bodyEditor, attributionText));
         const hasNote = note && editorContainsText(bodyEditor, payload.bodyNote || noteText);
         if (note && !hasNote && payload.position === 'top') {
           pasteIntoEditable(bodyEditor, note, noteText, { replace: false, position: 'top' });
@@ -686,7 +768,9 @@
         if (note && !hasNote && payload.position === 'bottom') {
           pasteIntoEditable(bodyEditor, note, noteText, { replace: false, position: 'bottom' });
         }
-        if (hasAttribution) warnings.push('全文中已存在相同来源署名，已跳过重复添加。');
+        if (removedDuplicateAttribution) warnings.push('已移除与微信原生介绍重复的墨流来源署名。');
+        else if (hasPlatformAttribution) warnings.push('微信已提供原生来源介绍，已跳过重复添加。');
+        else if (hasAttribution) warnings.push('全文中已存在相同来源署名，已跳过重复添加。');
         if (hasNote) warnings.push('全文中已存在相同正文增补，已跳过重复添加。');
         const imageResult = pasteImageIntoEditable(bodyEditor, payload.tailImage);
         if (imageResult.duplicate) warnings.push('全文中已存在相同尾图，已跳过重复添加。');
@@ -697,9 +781,53 @@
       }
     }
     return {
-      message: repost.canModify && payload.insertBody ? '已填写荐语并增补正文' : '已填写公众号原生转载荐语',
+      message: options.automatic
+        ? (repost.canModify && payload.insertBody ? '原生转载已自动增补完成' : '原生转载荐语已自动填写')
+        : (repost.canModify && payload.insertBody ? '已填写荐语并增补正文' : '已填写公众号原生转载荐语'),
       warnings
     };
+  }
+
+  async function applyNativeRepost(payload) {
+    const repost = nativeRepostState();
+    if (!repost.ready) {
+      await rememberPendingNativeApply(payload);
+      try {
+        const searchResult = await searchNativeRepost(payload);
+        return {
+          ...searchResult,
+          pendingSelection: true,
+          warnings: ['选中原文并点击公众号的“转载”后，墨流会自动完成增补。']
+        };
+      } catch (error) {
+        await clearPendingNativeApply();
+        throw error;
+      }
+    }
+    const result = await applyNativeRepostReady(payload);
+    await clearPendingNativeApply();
+    return result;
+  }
+
+  async function maybeApplyPendingNativeRepost() {
+    if (pendingNativeApplyRunning || !nativeRepostState().ready) return;
+    const record = await pendingNativeApply();
+    if (!record || pendingNativeApplyRunning || !nativeRepostState().ready) return;
+    pendingNativeApplyRunning = true;
+    try {
+      const result = await applyNativeRepostReady(record.payload, { automatic: true });
+      if (record.tailImageOmitted) {
+        result.warnings.push('页面跳转时结尾图片因体积过大未能暂存，请重新选择后应用。');
+      }
+      await clearPendingNativeApply();
+      const warning = result.warnings.length ? `；${result.warnings.join(' ')}` : '';
+      showHostNotice(`${result.message}${warning}`);
+    } catch (error) {
+      await clearPendingNativeApply();
+      showHostNotice(error.message || '原生转载自动增补失败，请再次点击应用', true);
+    } finally {
+      pendingNativeApplyRunning = false;
+    }
   }
 
   function imageWarnings(html) {
@@ -773,5 +901,21 @@
     consumeRepostIntent().then(shouldOpen => {
       if (shouldOpen) openPanel('repost');
     }).catch(() => {});
+  }
+
+  if (!isHomePage) {
+    let pendingApplyTimer;
+    const schedulePendingNativeApply = () => {
+      clearTimeout(pendingApplyTimer);
+      pendingApplyTimer = setTimeout(maybeApplyPendingNativeRepost, 350);
+    };
+    const repostObserver = new MutationObserver(schedulePendingNativeApply);
+    repostObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden']
+    });
+    schedulePendingNativeApply();
   }
 })();
