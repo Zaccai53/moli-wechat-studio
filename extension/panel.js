@@ -246,7 +246,14 @@ function supplements() {
 
 $('#searchNativeButton').addEventListener('click', async () => {
   const result = await run($('#searchNativeButton'), 'SEARCH_NATIVE_REPOST', {
-    url: $('#repostUrl').value
+    ...supplements(),
+    url: $('#repostUrl').value,
+    noteTitle: $('#noteTitle').value,
+    note: $('#note').value,
+    bodyNoteTitle: '编者按',
+    bodyNote: $('#bodyNote').value,
+    position: document.querySelector('input[name="nativePosition"]:checked').value,
+    permissionConfirmed: $('#permission').checked
   }, '正在搜索…');
   if (result) setTimeout(() => request('CLOSE_PANEL'), 650);
 });
@@ -260,7 +267,8 @@ $('#applyNativeButton').addEventListener('click', async () => {
     insertBody: $('#insertBody').checked,
     bodyNoteTitle: '编者按',
     bodyNote: $('#bodyNote').value,
-    position: document.querySelector('input[name="nativePosition"]:checked').value
+    position: document.querySelector('input[name="nativePosition"]:checked').value,
+    permissionConfirmed: $('#permission').checked
   }, '正在应用…');
   if (result?.pendingSelection) setTimeout(() => request('CLOSE_PANEL'), 650);
   else if (result) refreshEditorStatus();

@@ -270,10 +270,8 @@ const { chromium } = require('playwright');
 
   await page.locator('#title').fill('错误标题');
   await page.locator('#ueditor_0 .ProseMirror').evaluate(element => {
-    const imageBlock = element.lastElementChild;
-    element.innerHTML = '<p>错误正文</p>';
-    element.prepend(imageBlock);
-    delete element.dataset.moliImport;
+    element.innerHTML = '';
+    element.addEventListener('paste', event => event.preventDefault(), { once: true });
   });
   await request('IMPORT_REPOST', importPayload);
   assert.equal(await page.locator('#title').inputValue(), '自定义活动标题');
@@ -281,6 +279,19 @@ const { chromium } = require('playwright');
   assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText('错误正文', { exact: true }).count(), 0);
   assert.equal(await page.locator('#ueditor_0 .ProseMirror img').count(), 1);
   assert.equal(await page.locator('#ueditor_0 .ProseMirror > :last-child img').count(), 1);
+
+  await page.locator('#js_reprint_source').evaluate(element => { element.style.display = 'none'; });
+  await request('SEARCH_NATIVE_REPOST', importPayload);
+  await page.locator('.js_search_error').evaluate(element => {
+    element.textContent = '不是有效的账号原创文章链接';
+  });
+  await page.waitForFunction(() => window.moliStoredValues?.moliPendingPublicFallback?.invalidOriginal === true);
+  await page.locator('#ueditor_0 .ProseMirror').evaluate(element => { element.innerHTML = ''; });
+  await page.locator('.share_article_dialog').evaluate(element => { element.style.display = 'none'; });
+  await page.waitForFunction(() => document.querySelector('#ueditor_0 .ProseMirror')?.textContent.includes('公开正文'));
+  assert.match(await page.locator('.moli-host-notice').innerText(), /自动改用公开正文直导/);
+  assert.equal(await page.evaluate(() => window.moliStoredValues?.moliPendingPublicFallback), undefined);
+  assert.equal(await page.locator('#ueditor_0 .ProseMirror').getByText('公开正文', { exact: true }).count(), 1);
 
   await request('SAVE_DRAFT');
   await request('OPEN_PUBLISH');

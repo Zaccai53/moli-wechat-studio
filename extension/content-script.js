@@ -102,8 +102,11 @@
 
   const PENDING_NATIVE_APPLY_KEY = 'moliPendingNativeApply';
   const PENDING_NATIVE_APPLY_TTL = 15 * 60 * 1000;
+  const PENDING_PUBLIC_FALLBACK_KEY = 'moliPendingPublicFallback';
   let pendingNativeApplyMemory = null;
   let pendingNativeApplyRunning = false;
+  let pendingPublicFallbackMemory = null;
+  let pendingPublicFallbackRunning = false;
 
   function activePendingNativeApply(record) {
     const startedAt = Number(record?.startedAt || 0);
@@ -142,6 +145,38 @@
   async function clearPendingNativeApply() {
     pendingNativeApplyMemory = null;
     if (chrome.storage?.local) await chrome.storage.local.remove(PENDING_NATIVE_APPLY_KEY).catch(() => {});
+  }
+
+  async function storePendingPublicFallback(record) {
+    pendingPublicFallbackMemory = record;
+    if (!chrome.storage?.local) return;
+    try {
+      await chrome.storage.local.set({ [PENDING_PUBLIC_FALLBACK_KEY]: record });
+    } catch {
+      const fallback = {
+        ...record,
+        payload: { ...record.payload, tailImage: null },
+        tailImageOmitted: Boolean(record.payload?.tailImage)
+      };
+      await chrome.storage.local.set({ [PENDING_PUBLIC_FALLBACK_KEY]: fallback }).catch(() => {});
+    }
+  }
+
+  async function rememberPendingPublicFallback(payload) {
+    await storePendingPublicFallback({ startedAt: Date.now(), payload, invalidOriginal: false });
+  }
+
+  async function pendingPublicFallback() {
+    const memoryRecord = activePendingNativeApply(pendingPublicFallbackMemory);
+    if (memoryRecord) return memoryRecord;
+    if (!chrome.storage?.local) return null;
+    const stored = await chrome.storage.local.get(PENDING_PUBLIC_FALLBACK_KEY);
+    return activePendingNativeApply(stored?.[PENDING_PUBLIC_FALLBACK_KEY]);
+  }
+
+  async function clearPendingPublicFallback() {
+    pendingPublicFallbackMemory = null;
+    if (chrome.storage?.local) await chrome.storage.local.remove(PENDING_PUBLIC_FALLBACK_KEY).catch(() => {});
   }
 
   function openPanel(tab = '') {
@@ -264,6 +299,40 @@
     element.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  function editableMatchesText(element, text) {
+    const expected = normalizedText(text);
+    return Boolean(expected) && normalizedText(element?.textContent) === expected;
+  }
+
+  async function waitForEditableText(element, text, timeout = 500) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeout) {
+      if (editableMatchesText(element, text)) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return editableMatchesText(element, text);
+  }
+
+  async function replaceEditableVerified(element, html, text) {
+    pasteIntoEditable(element, html, text);
+    if (await waitForEditableText(element, text)) return;
+
+    // Some WeChat editor states cancel the synthetic paste event without
+    // applying its clipboard data. Retry at the editor root, then verify the
+    // actual DOM instead of treating preventDefault() as proof of success.
+    element.focus();
+    selectContents(element, 'replace');
+    element.ownerDocument.execCommand('insertHTML', false, html);
+    if (!editableMatchesText(element, text)) element.innerHTML = html;
+    element.dispatchEvent(new InputEvent('input', {
+      bubbles: true, composed: true, inputType: 'insertFromPaste', data: text
+    }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!await waitForEditableText(element, text)) {
+      throw new Error('标题和作者已读取，但正文未能写入公众号编辑器，请刷新页面后重试');
+    }
+  }
+
   function setNativeValue(element, value) {
     if (!element) return false;
     const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -312,7 +381,7 @@
   }
 
   function normalizedText(value) {
-    return String(value || '').replace(/\s+/g, '').trim();
+    return String(value || '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, '').trim();
   }
 
   function editorContainsText(element, value) {
@@ -352,9 +421,6 @@
 
   function editorContainsImage(element, image) {
     if (!element || !image?.dataUrl) return false;
-    const fingerprint = imageFingerprint(image);
-    const insertedImages = String(element.dataset.moliImages || '').split(',');
-    if (insertedImages.includes(fingerprint)) return true;
     return Boolean(matchingImage(element, image));
   }
 
@@ -512,8 +578,8 @@
     if (!image?.dataUrl) return { inserted: false, uploadedByWechat: false };
     if (!element) throw new Error('未找到可插入尾图的正文编辑器');
     if (editorContainsImage(element, image)) {
-      moveTailImageToEnd(element, image);
-      return { inserted: false, uploadedByWechat: false, duplicate: true, movedToEnd: true };
+      const movedToEnd = moveTailImageToEnd(element, image);
+      return { inserted: false, uploadedByWechat: false, duplicate: true, movedToEnd };
     }
     const imagesBeforePaste = new Set(element.querySelectorAll('img'));
     element.focus();
@@ -675,13 +741,67 @@
     const input = await waitForVisible(SELECTORS.nativeRepostSearch);
     if (!input) throw new Error('转载窗口已打开，但未找到原文搜索框');
     setNativeValue(input, url);
+    await rememberPendingPublicFallback({ ...payload, url });
     const searchButton = findFirst(SELECTORS.nativeRepostSearchButton);
     if (searchButton) clickWechatAction(searchButton);
     else {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
       input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
     }
+    setTimeout(maybeHandlePendingPublicFallback, 0);
     return { message: '已自动打开转载窗口并搜索原文，请选择文章并点击“确定”' };
+  }
+
+  function nativeSearchRejectedAsNonOriginal() {
+    const dialog = findFirst(SELECTORS.nativeRepostDialog);
+    if (!isVisible(dialog)) return false;
+    const text = normalizedText(dialog.textContent);
+    return /不是有效的账号原创文章链接|不是有效的原创文章链接|该文章未声明原创|无法转载非原创文章/.test(text);
+  }
+
+  async function maybeHandlePendingPublicFallback() {
+    if (pendingPublicFallbackRunning) return;
+    const record = await pendingPublicFallback();
+    if (!record || pendingPublicFallbackRunning) return;
+
+    if (!record.invalidOriginal) {
+      if (nativeSearchRejectedAsNonOriginal()) {
+        record.invalidOriginal = true;
+        await storePendingPublicFallback(record);
+        await clearPendingNativeApply();
+        showHostNotice(record.payload.permissionConfirmed
+          ? '检测到该文章未声明原创；关闭转载窗口后将自动按公开正文导入'
+          : '检测到该文章未声明原创；如已获单独授权，请勾选授权后使用公开正文直导');
+      } else if (nativeRepostState().ready) {
+        await clearPendingPublicFallback();
+      }
+      return;
+    }
+
+    if (isVisible(findFirst(SELECTORS.nativeRepostDialog)) || !findBodyEditor()) return;
+    if (!record.payload.permissionConfirmed) {
+      await clearPendingPublicFallback();
+      openPanel('repost');
+      showHostNotice('该文章无法原生转载；请确认单独授权并勾选后，再点击“尝试直接读取公开正文”', true);
+      return;
+    }
+
+    pendingPublicFallbackRunning = true;
+    try {
+      const result = await queueImportRepost(record.payload);
+      if (record.tailImageOmitted) {
+        result.warnings.push('页面跳转时结尾图片因体积过大未能暂存，请重新选择后应用。');
+      }
+      await clearPendingPublicFallback();
+      const warning = result.warnings.length ? `；${result.warnings.join(' ')}` : '';
+      showHostNotice(`原生转载不可用，已自动改用公开正文直导；${result.message}${warning}`);
+    } catch (error) {
+      await clearPendingPublicFallback();
+      openPanel('repost');
+      showHostNotice(error.message || '公开正文自动导入失败，请点击按钮重试', true);
+    } finally {
+      pendingPublicFallbackRunning = false;
+    }
   }
 
   async function importRepost(payload) {
@@ -698,19 +818,19 @@
     if (normalizedText(currentTitle()) === normalizedText(desiredTitle)) {
       warnings.push('标题已是目标内容，已跳过重复写入。');
     } else {
-      setArticleMetadata({ ...article, title: desiredTitle });
+      setTitle(desiredTitle);
     }
+    setArticleMetadata({ ...article, title: '' });
     const bodyEditor = findBodyEditor();
     const desiredFingerprint = contentFingerprint(content);
     const existingTailBlock = tailImageBlock(matchingImage(bodyEditor, payload.tailImage));
     const desiredText = plainTextFromHtml(content);
-    const sameContent = bodyEditor.dataset.moliImport === desiredFingerprint
-      || normalizedText(bodyEditor.textContent) === normalizedText(desiredText);
+    const sameContent = editableMatchesText(bodyEditor, desiredText);
     if (sameContent) {
       warnings.push('图文正文已是目标内容，已跳过重复写入。');
     } else {
       if (existingTailBlock) existingTailBlock.remove();
-      pasteIntoEditable(bodyEditor, content, desiredText);
+      await replaceEditableVerified(bodyEditor, content, desiredText);
       bodyEditor.dataset.moliImport = desiredFingerprint;
       if (existingTailBlock) bodyEditor.append(existingTailBlock);
     }
@@ -720,7 +840,8 @@
       bodyEditor.dataset.moliImages = [...fingerprints].join(',');
     }
     const imageResult = pasteImageIntoEditable(bodyEditor, payload.tailImage);
-    if (imageResult.duplicate) warnings.push('全文中已存在相同尾图，已保留并移动到文章结尾。');
+    if (imageResult.duplicate && imageResult.movedToEnd) warnings.push('全文中已存在相同尾图，已保留并移动到文章结尾。');
+    else if (imageResult.duplicate) warnings.push('全文中已存在相同尾图，已跳过重复添加。');
     if (imageResult.inserted && !imageResult.uploadedByWechat) warnings.push('尾图已插入，保存前请确认公众号完成图片转存。');
     if (!article.isOriginal) warnings.push('未检测到原创标识，已按普通新文章导入。');
     return {
@@ -732,6 +853,7 @@
   async function applyNativeRepostReady(payload, options = {}) {
     const repost = nativeRepostState();
     if (!repost.ready) throw new Error('转载原文仍在载入，请稍后重试');
+    await clearPendingPublicFallback();
     const titleField = findFirst(SELECTORS.nativeRepostTitle);
     const contentField = findFirst(SELECTORS.nativeRepostContent);
     if (!titleField || !contentField) {
@@ -865,7 +987,10 @@
       case 'STATUS': return editorStatus();
       case 'APPLY_MARKDOWN': return applyMarkdown(payload);
       case 'SEARCH_NATIVE_REPOST': return searchNativeRepost(payload);
-      case 'IMPORT_REPOST': return queueImportRepost(payload);
+      case 'IMPORT_REPOST':
+        await clearPendingPublicFallback();
+        await clearPendingNativeApply();
+        return queueImportRepost(payload);
       case 'APPLY_NATIVE_REPOST': return applyNativeRepost(payload);
       case 'ENHANCE_NATIVE_REPOST': return applyNativeRepost(payload);
       case 'SAVE_DRAFT': return clickNative(SELECTORS.save, '未找到“保存为草稿”按钮');
@@ -904,18 +1029,22 @@
   }
 
   if (!isHomePage) {
-    let pendingApplyTimer;
-    const schedulePendingNativeApply = () => {
-      clearTimeout(pendingApplyTimer);
-      pendingApplyTimer = setTimeout(maybeApplyPendingNativeRepost, 350);
+    let pendingActionTimer;
+    const schedulePendingActions = () => {
+      clearTimeout(pendingActionTimer);
+      pendingActionTimer = setTimeout(() => {
+        maybeApplyPendingNativeRepost();
+        maybeHandlePendingPublicFallback();
+      }, 350);
     };
-    const repostObserver = new MutationObserver(schedulePendingNativeApply);
+    const repostObserver = new MutationObserver(schedulePendingActions);
     repostObserver.observe(document.body, {
       childList: true,
       subtree: true,
+      characterData: true,
       attributes: true,
       attributeFilter: ['class', 'style', 'hidden']
     });
-    schedulePendingNativeApply();
+    schedulePendingActions();
   }
 })();
